@@ -2024,6 +2024,34 @@ function Show-TaskEditor {
         }
     })
 
+    $browseLogDirectoryButton.Add_Click({
+        $dialog = $null
+        try {
+            $dialog = New-Object Windows.Forms.FolderBrowserDialog
+            $dialog.Description = '选择后台应用日志目录'
+            $dialog.ShowNewFolderButton = $true
+            $candidate = [Environment]::ExpandEnvironmentVariables($logDirectoryBox.Text.Trim())
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and [IO.Directory]::Exists($candidate)) {
+                $dialog.SelectedPath = [IO.Path]::GetFullPath($candidate)
+            }
+            if ($dialog.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) {
+                $logDirectoryBox.Text = $dialog.SelectedPath
+            }
+        }
+        catch {
+            [void][Windows.MessageBox]::Show(
+                $window,
+                $_.Exception.Message,
+                '无法选择日志目录',
+                [Windows.MessageBoxButton]::OK,
+                [Windows.MessageBoxImage]::Warning
+            )
+        }
+        finally {
+            if ($null -ne $dialog) { $dialog.Dispose() }
+        }
+    })
+
     $cancelButton.Add_Click({ $window.DialogResult = $false })
     $saveButton.Add_Click({
         try {
@@ -2193,23 +2221,6 @@ function Show-DeleteTaskDialog {
         $window.DialogResult = $true
     })
 
-    $browseLogDirectoryButton.Add_Click({
-        $dialog = New-Object Windows.Forms.FolderBrowserDialog
-        $dialog.Description = '选择后台应用日志目录'
-        $dialog.ShowNewFolderButton = $true
-        try {
-            $candidate = [Environment]::ExpandEnvironmentVariables($logDirectoryBox.Text.Trim())
-            if (-not [string]::IsNullOrWhiteSpace($candidate) -and [IO.Directory]::Exists($candidate)) {
-                $dialog.SelectedPath = [IO.Path]::GetFullPath($candidate)
-            }
-            if ($dialog.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) {
-                $logDirectoryBox.Text = $dialog.SelectedPath
-            }
-        }
-        finally {
-            $dialog.Dispose()
-        }
-    })
     $window.FindName('CancelButton').Add_Click({ $window.DialogResult = $false })
     if ($window.ShowDialog()) {
         return [PSCustomObject]@{ Confirmed = $true; DeleteLogs = [bool]$window.Tag }
@@ -2349,44 +2360,51 @@ $script:MainWindow.FindName('DisableButton').Add_Click({
 })
 
 $script:MainWindow.FindName('DeleteButton').Add_Click({
-    $selected = $script:TaskGrid.SelectedItem
-    if ($null -eq $selected) {
-        Show-InfoMessage '请先选择一个任务。'
-        return
-    }
-    $deleteOptions = Show-DeleteTaskDialog -FullTaskPath $selected.Path
-    if (-not $deleteOptions.Confirmed) { return }
-    Invoke-WithSelectedTask -OperationName '删除' -Operation {
-        param($folder, $task, $model)
-        $definition = $null
-        $actions = $null
-        $taskAction = $null
-        $runtimeInfo = $null
-        try {
-            $definition = $task.Definition
-            $actions = $definition.Actions
-            if ([int]$actions.Count -eq 1) {
-                $taskAction = $actions.Item(1)
-                $runtimeInfo = Get-BackgroundRuntimeInfo -FullTaskPath $model.Path -Action $taskAction
-            }
+    try {
+        $selected = $script:TaskGrid.SelectedItem
+        if ($null -eq $selected) {
+            Show-InfoMessage '请先选择一个任务。'
+            return
         }
-        finally {
-            Release-ComObject $taskAction
-            Release-ComObject $actions
-            Release-ComObject $definition
-        }
-        $parts = Split-RegisteredTaskPath $model.Path
-        $folder.DeleteTask($parts.Name, 0)
-        if ($null -ne $runtimeInfo) {
+        $deleteOptions = Show-DeleteTaskDialog -FullTaskPath $selected.Path
+        if (-not $deleteOptions.Confirmed) { return }
+        Invoke-WithSelectedTask -OperationName '删除' -Operation {
+            param($folder, $task, $model)
+            $definition = $null
+            $actions = $null
+            $taskAction = $null
+            $runtimeInfo = $null
             try {
-                Remove-BackgroundRuntimeFiles -RuntimeInfo $runtimeInfo -DeleteLogs ([bool]$deleteOptions.DeleteLogs)
+                $definition = $task.Definition
+                $actions = $definition.Actions
+                if ([int]$actions.Count -eq 1) {
+                    $taskAction = $actions.Item(1)
+                    $runtimeInfo = Get-BackgroundRuntimeInfo -FullTaskPath $model.Path -Action $taskAction
+                }
             }
-            catch {
-                $cleanupMessage = '任务已删除，但后台运行文件清理失败：{0}' -f $_.Exception.Message
-                Write-AppLog -Level WARN -Message $cleanupMessage
-                Show-InfoMessage $cleanupMessage
+            finally {
+                Release-ComObject $taskAction
+                Release-ComObject $actions
+                Release-ComObject $definition
+            }
+            $parts = Split-RegisteredTaskPath $model.Path
+            $folder.DeleteTask($parts.Name, 0)
+            if ($null -ne $runtimeInfo) {
+                try {
+                    Remove-BackgroundRuntimeFiles -RuntimeInfo $runtimeInfo -DeleteLogs ([bool]$deleteOptions.DeleteLogs)
+                }
+                catch {
+                    $cleanupMessage = '任务已删除，但后台运行文件清理失败：{0}' -f $_.Exception.Message
+                    Write-AppLog -Level WARN -Message $cleanupMessage
+                    Show-InfoMessage $cleanupMessage
+                }
             }
         }
+    }
+    catch {
+        $message = Get-FriendlyError -ErrorRecord $_ -Context '打开删除确认窗口'
+        Show-ErrorMessage $message
+        Set-Status -Text $message
     }
 })
 

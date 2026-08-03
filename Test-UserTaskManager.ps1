@@ -255,6 +255,25 @@ try {
         $mainScriptPath = Join-Path $PSScriptRoot 'UserTaskManager.ps1'
         . $mainScriptPath -SmokeTest | ForEach-Object { Write-Host $_ }
 
+        $sourceTokens = $null
+        $sourceErrors = $null
+        $sourceAst = [Management.Automation.Language.Parser]::ParseFile(
+            $mainScriptPath,
+            [ref]$sourceTokens,
+            [ref]$sourceErrors
+        )
+        Assert-True ($sourceErrors.Count -eq 0) '主应用通过 PowerShell 语法解析'
+        $functionAsts = @($sourceAst.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst]
+        }, $true))
+        $deleteDialogAst = $functionAsts | Where-Object Name -eq 'Show-DeleteTaskDialog' | Select-Object -First 1
+        $taskEditorAst = $functionAsts | Where-Object Name -eq 'Show-TaskEditor' | Select-Object -First 1
+        Assert-True ($null -ne $deleteDialogAst -and
+            $deleteDialogAst.Extent.Text -notmatch 'browseLogDirectoryButton|logDirectoryBox') '删除确认窗口不引用任务编辑器的日志控件'
+        Assert-True ($null -ne $taskEditorAst -and
+            $taskEditorAst.Extent.Text -match 'browseLogDirectoryButton\.Add_Click') '日志目录浏览事件绑定在任务编辑器中'
+
         $sameLeafA = Get-BackgroundRuntimeDirectory ('\FolderA\' + $backgroundName)
         $sameLeafB = Get-BackgroundRuntimeDirectory ('\FolderB\' + $backgroundName)
         Assert-True (-not [string]::Equals($sameLeafA, $sameLeafB, [StringComparison]::OrdinalIgnoreCase)) '不同文件夹中的同名任务使用不同后台运行目录'
