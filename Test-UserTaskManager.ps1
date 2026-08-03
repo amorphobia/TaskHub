@@ -64,6 +64,53 @@ function Assert-True {
     $script:results.Add(('通过：{0}' -f $Message))
 }
 
+function Get-DescendantProcessRows {
+    param([Parameter(Mandatory = $true)][int]$RootProcessId)
+    $allProcesses = @(Get-CimInstance Win32_Process)
+    $pendingParents = New-Object 'System.Collections.Generic.Queue[int]'
+    $seen = @{}
+    $results = New-Object 'System.Collections.Generic.List[object]'
+    $pendingParents.Enqueue($RootProcessId)
+    $seen[$RootProcessId] = $true
+    while ($pendingParents.Count -gt 0) {
+        $parentId = $pendingParents.Dequeue()
+        foreach ($process in $allProcesses) {
+            $processId = [int]$process.ProcessId
+            if ([int]$process.ParentProcessId -eq $parentId -and -not $seen.ContainsKey($processId)) {
+                $seen[$processId] = $true
+                $pendingParents.Enqueue($processId)
+                $results.Add([PSCustomObject]@{
+                    ProcessId = $processId
+                    ParentProcessId = [int]$process.ParentProcessId
+                    Name = [string]$process.Name
+                    CommandLine = [string]$process.CommandLine
+                })
+            }
+        }
+    }
+    return $results
+}
+
+function Read-SharedLogText {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $stream = $null
+    $reader = $null
+    try {
+        $stream = New-Object IO.FileStream(
+            $Path,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Read,
+            ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete)
+        )
+        $reader = New-Object IO.StreamReader($stream, [Text.Encoding]::Default, $true)
+        return $reader.ReadToEnd()
+    }
+    finally {
+        if ($null -ne $reader) { $reader.Dispose() }
+        elseif ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+
 function New-TestDefinition {
     param(
         [ValidateSet('Logon', 'Once', 'Daily')]
@@ -249,6 +296,7 @@ try {
     $backgroundRunning = $null
     $backgroundRuntime = $null
     $backgroundRegistered = $false
+    $backgroundProcessIds = @()
     $backgroundCustomLogDirectory = Join-Path $env:LOCALAPPDATA ('UserTaskManager\TestLogs\{0}' -f ([Guid]::NewGuid().ToString('N')))
     $backgroundLogSentinel = Join-Path $backgroundCustomLogDirectory 'unrelated.keep'
     try {
@@ -281,14 +329,20 @@ try {
         $defaultValues = Get-BackgroundActionValues $backgroundFullPath
         $defaultLog = Resolve-BackgroundLogDirectory -RequestedPath '' -DefaultPath $defaultValues.DefaultLogDirectory
         Assert-True ($defaultLog.IsDefault -and [string]::Equals($defaultLog.Path, [IO.Path]::GetFullPath($defaultValues.DefaultLogDirectory), [StringComparison]::OrdinalIgnoreCase)) '留空日志路径会解析到任务专属默认 logs 目录'
+        $legacyActionValues = New-BackgroundActionValues -RuntimeDirectory $defaultValues.RuntimeDirectory -Scheme 'HashedV2'
+        $legacyAction = [PSCustomObject]@{
+            Path = $legacyActionValues.ActionPath
+            Arguments = $legacyActionValues.ActionArguments
+        }
+        Assert-True (Test-ActionTargetsBackgroundRunner -FullTaskPath $backgroundFullPath -Action $legacyAction) '仍可识别 Version 2 的 wscript + run.vbs action'
 
         $backgroundData = [PSCustomObject]@{
             TaskPath = '\'
             TaskName = $backgroundName
             Description = 'UserTaskManager 后台应用安全测试'
             Enabled = $true
-            Program = Join-Path $env:SystemRoot 'System32\cmd.exe'
-            Arguments = '/d /c echo user-task-manager-background-ok'
+            Program = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            Arguments = '-NoLogo -NoProfile -NonInteractive -Command "Write-Output ''user-task-manager-background-ok''; $child = [Diagnostics.Process]::Start(($env:SystemRoot + ''\System32\PING.EXE''), ''127.0.0.1 -t''); $child.WaitForExit()"'
             WorkingDirectory = [Environment]::GetFolderPath('LocalApplicationData')
             BackgroundMode = $true
             LogDirectory = $backgroundCustomLogDirectory
@@ -318,7 +372,13 @@ try {
             $backgroundAction = $backgroundActions.Item(1)
             $backgroundSettings = $backgroundDefinition.Settings
             $backgroundRuntime = Get-BackgroundRuntimeInfo -FullTaskPath $backgroundFullPath -Action $backgroundAction
-            Assert-True ($null -ne $backgroundRuntime) '后台测试任务使用嵌入式 wscript 包装器'
+            $expectedWrapperPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            Assert-True ($null -ne $backgroundRuntime -and $backgroundRuntime.Scheme -eq 'DirectPowerShellV3') '后台测试任务使用直接 PowerShell Version 3 包装器'
+            Assert-True ([string]::Equals([string]$backgroundAction.Path, $expectedWrapperPowerShell, [StringComparison]::OrdinalIgnoreCase)) 'Task Scheduler 直接跟踪系统 Windows PowerShell'
+            Assert-True ([string]$backgroundAction.Arguments -match '^-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File ') '包装器 action 使用隐藏且非交互的 PowerShell 参数'
+            Assert-True ([string]::Equals([string]$backgroundAction.WorkingDirectory, $backgroundRuntime.RuntimeDirectory, [StringComparison]::OrdinalIgnoreCase)) '包装器 action 使用任务专属运行目录'
+            Assert-True ([int]$backgroundRuntime.Config.Version -eq 3) '后台配置版本为 3'
+            Assert-True (-not [IO.File]::Exists($backgroundRuntime.RunVbsPath)) '后台任务不部署 run.vbs'
             Assert-True (-not [bool]$backgroundRuntime.LogDirectoryIsDefault) '后台测试任务识别为自定义日志目录'
             Assert-True ([string]::Equals($backgroundRuntime.LogDirectory, [IO.Path]::GetFullPath($backgroundCustomLogDirectory), [StringComparison]::OrdinalIgnoreCase)) '后台任务日志写入规范化的自定义目录'
             Assert-True ([string]$backgroundSettings.ExecutionTimeLimit -eq 'PT0S') '后台测试任务没有 72 小时执行上限'
@@ -337,17 +397,57 @@ try {
         do {
             Start-Sleep -Milliseconds 250
             if ([IO.File]::Exists($backgroundRuntime.StdOutPath)) {
-                $capturedOutput = [IO.File]::ReadAllText($backgroundRuntime.StdOutPath)
+                $capturedOutput = Read-SharedLogText $backgroundRuntime.StdOutPath
             }
         } while ($capturedOutput -notmatch 'user-task-manager-background-ok' -and (Get-Date) -lt $deadline)
         Assert-True ($capturedOutput -match 'user-task-manager-background-ok') '后台测试任务写入 stdout.log'
         [IO.File]::WriteAllText($backgroundLogSentinel, 'must-not-delete', [Text.Encoding]::UTF8)
 
+        $wrapperEngineProcessId = [int]$backgroundRunning.EnginePID
+        $descendants = @()
         do {
-            Start-Sleep -Milliseconds 200
-        } while ([int]$backgroundTask.State -eq 4 -and (Get-Date) -lt $deadline)
+            Start-Sleep -Milliseconds 250
+            $descendants = @(Get-DescendantProcessRows -RootProcessId $wrapperEngineProcessId)
+        } while (($descendants.Count -lt 2 -or @($descendants | Where-Object Name -eq 'PING.EXE').Count -eq 0) -and
+            (Get-Date) -lt $deadline)
+        Assert-True ($descendants.Count -ge 2) '后台包装器启动目标进程及其子进程'
+        Assert-True (@($descendants | Where-Object Name -eq 'PING.EXE').Count -eq 1) '后台测试进程树包含长时间运行的孙进程'
+        $wrapperProcess = Get-Process -Id $wrapperEngineProcessId -ErrorAction Stop
+        Assert-True ([IntPtr]$wrapperProcess.MainWindowHandle -eq [IntPtr]::Zero) 'Task Scheduler 直接启动的 PowerShell 包装器没有可见主窗口'
+        $backgroundProcessIds = @($wrapperEngineProcessId) + @($descendants | ForEach-Object { [int]$_.ProcessId })
+
+        $backgroundTask.Stop(0)
+        $stopDeadline = (Get-Date).AddSeconds(15)
+        $remainingProcesses = @()
+        do {
+            Start-Sleep -Milliseconds 250
+            $remainingProcesses = @(Get-CimInstance Win32_Process | Where-Object {
+                $backgroundProcessIds -contains [int]$_.ProcessId
+            })
+        } while ($remainingProcesses.Count -gt 0 -and (Get-Date) -lt $stopDeadline)
+        Assert-True ($remainingProcesses.Count -eq 0) '停止任务会通过 Job Object 终止包装器、目标进程和孙进程'
+        Assert-True ([int]$backgroundTask.State -ne 4) '停止后 Task Scheduler 不再报告运行实例'
     }
     finally {
+        if ($null -ne $backgroundTask) {
+            try {
+                if ([int]$backgroundTask.State -eq 4) {
+                    $backgroundTask.Stop(0)
+                    Start-Sleep -Milliseconds 500
+                }
+            }
+            catch {}
+        }
+        foreach ($processId in @($backgroundProcessIds)) {
+            try {
+                Stop-Process -Id $processId -Force -ErrorAction Stop
+            }
+            catch {
+                if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {
+                    Write-Warning ('清理后台测试进程失败：PID {0}；{1}' -f $processId, $_.Exception.Message)
+                }
+            }
+        }
         Release-ComObject $backgroundRunning
         Release-ComObject $backgroundTask
         if ($backgroundRegistered -and $null -ne $backgroundFolder) {

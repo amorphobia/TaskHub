@@ -52,7 +52,7 @@ UserTaskManager 是一个面向普通 Windows 用户的轻量级计划任务管�
 - 路径不存在时，程序逐级调用 Task Scheduler COM API 尝试创建。拒绝访问时原样报告，不提升，也不回退到其他目录。
 - 支持登录、单次和每日触发器；单次和每日触发器可设置分钟级重复间隔。
 - executable、arguments 和 working directory 分别写入 Exec action，不拼接为需要 PowerShell 或 shell 重新解释的命令。
-- 可将任务设为“后台应用”：计划任务通过 `wscript.exe` 无窗口启动嵌入式包装器，适合 `python -m http.server` 等需要长期运行并记录标准输出的程序。
+- 可将任务设为“后台应用”：计划任务直接启动隐藏的 Windows PowerShell 5.1 包装器，并用 Windows Job Object 管理目标进程树，适合 `python -m http.server` 等长期运行程序。
 - 同名覆盖、编辑、移动/重命名和删除前均显示完整任务路径并要求确认。
 - 对事件触发器、Boot trigger、COM Handler、多操作、多个触发器、最高权限、非 InteractiveToken 或编辑器无法忠实表达的高级结构，编辑器保持只读，避免覆盖原定义。XML 仍可查看或导出。
 
@@ -86,7 +86,6 @@ GUI 不提供 SYSTEM、LocalService、NetworkService、其他用户、HighestAva
 
 ```text
 %LOCALAPPDATA%\UserTaskManager\Tasks\<完整任务路径的 SHA-256>\
-├── run.vbs
 ├── wrapper.ps1
 ├── config.json
 └── logs\
@@ -97,21 +96,26 @@ GUI 不提供 SYSTEM、LocalService、NetworkService、其他用户、HighestAva
 
 运行目录的标识由规范化后的完整任务路径（TaskPath + TaskName，不区分大小写）计算。因而不同任务文件夹中的同名任务具有不同目录，可以同时使用后台模式；目录内的 `config.json` 还会核对完整任务路径。
 
-`run.vbs` 和 `wrapper.ps1` 的模板已经嵌入 `UserTaskManager.ps1`，项目目录不需要独立副本。创建任务时，程序将它们释放到任务专用目录。`config.json` 分别保存目标 executable、arguments、working directory、日志目录和完整 Task Scheduler 路径。
+`wrapper.ps1` 的模板已经嵌入 `UserTaskManager.ps1`，项目目录不需要独立副本。创建任务时，程序将它释放到任务专用目录。`config.json` 分别保存目标 executable、arguments、working directory、日志目录和完整 Task Scheduler 路径。
 
 编辑器中的“日志目录（可选）”仅用于后台应用。留空时使用上述任务专用目录内的 `logs`；也可以填写或浏览选择一个绝对路径作为自定义日志目录。主窗口选择后台任务后点击“打开任务日志”，程序会从该任务的当前配置读取并打开实际目录，因此默认目录和自定义目录都适用。
 
 计划任务本身只执行系统自带的：
 
 ```text
-%SystemRoot%\System32\wscript.exe //B //Nologo "...\run.vbs"
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe
+  -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File "...\wrapper.ps1"
 ```
 
-VBS 使用窗口样式 `0` 启动 Windows PowerShell 5.1；包装器通过 .NET `ProcessStartInfo` 直接启动目标程序、等待其结束并把退出码返回给 Task Scheduler。stdout/stderr 由异步事件写入允许共享读取的 UTF-8 日志，避免两个管道互相阻塞。整个链路不使用 `ExecutionPolicy Bypass`，也不请求提升。
+Task Scheduler 直接跟踪这个 PowerShell 进程。包装器通过 `CreateProcessW` 以挂起状态创建目标程序，先将其加入设置了 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object，再恢复主线程。这样目标程序来不及在受管范围之外创建子进程；停止任务导致包装器退出并关闭 Job 句柄时，Windows 内核会终止 Job 中的目标程序及其后代。
+
+目标程序的 stdout/stderr 句柄直接指向日志文件，不经过 PowerShell、`cmd.exe` 或文本编码转换；日志字节编码由目标程序自身决定。整个链路不使用 `ExecutionPolicy Bypass`，不请求提升，也不需要 `run.vbs`。
+
+旧版 Version 1/2 的 `wscript.exe + run.vbs` 后台任务仍可识别、编辑和删除。编辑并保存旧任务时会迁移为 Version 3 的直接 PowerShell action，并删除旧 `run.vbs`。旧任务在迁移前仍具有原启动链的停止限制；要获得完整进程树终止能力，需要编辑并保存一次。
 
 后台任务使用无限执行时间（`PT0S`），不会沿用普通任务的 72 小时上限；多实例策略设为 IgnoreNew，已有服务实例运行时不会因重复触发再启动一个实例。
 
-删除后台任务时，`wrapper.ps1`、`run.vbs` 和 `config.json` 始终删除。删除确认框中可以选择是否同时删除日志；默认保留日志。默认日志目录可以整体清理；对于自定义目录，程序只删除该任务生成的 `stdout.log`、`stderr.log` 和 `wrapper-error.log`，不会递归删除目录中的其他文件。若长期运行的进程仍占用日志，程序会有限重试，之后保留日志并给出明确提示。
+删除后台任务时，`wrapper.ps1`、`config.json` 和旧任务可能残留的 `run.vbs` 始终删除。删除确认框中可以选择是否同时删除日志；默认保留日志。默认日志目录可以整体清理；对于自定义目录，程序只删除该任务生成的 `stdout.log`、`stderr.log` 和 `wrapper-error.log`，不会递归删除目录中的其他文件。若长期运行的进程仍占用日志，程序会有限重试，之后保留日志并给出明确提示。
 
 ## 日志
 
@@ -123,7 +127,7 @@ VBS 使用窗口样式 `0` 启动 Windows PowerShell 5.1；包装器通过 .NET 
 
 日志记录连接、刷新、跳过的对象、成功操作及友好错误；不记录密码或敏感环境变量。用户填写的任务路径可能出现在操作和错误日志中。
 
-后台任务自己的 stdout/stderr 不写入主应用日志，而是写入默认或用户指定的任务日志目录。每次启动会重新创建 `stdout.log` 和 `stderr.log`。可在主窗口选择后台任务后点击“打开任务日志”直接访问该目录。
+后台任务自己的 stdout/stderr 不写入主应用日志，而是以目标程序输出的原始字节写入默认或用户指定的任务日志目录。每次启动会重新创建 `stdout.log` 和 `stderr.log`。可在主窗口选择后台任务后点击“打开任务日志”直接访问该目录。
 
 日志何时出现仍受目标程序自身的输出缓冲策略影响。例如 Python 程序需要即时刷新时可使用 Python 自己的 `-u` 参数；UserTaskManager 不会改写目标程序的缓冲行为。
 
@@ -142,8 +146,9 @@ VBS 使用窗口样式 `0` 启动 Windows PowerShell 5.1；包装器通过 .NET 
 3. 验证 InteractiveToken、LeastPrivilege 和独立的 action 字段；
 4. 仅对唯一测试任务执行启用、禁用、立即运行和停止；
 5. 验证不同文件夹中的同名任务会映射到不同的 SHA-256 后台运行目录；
-6. 使用主应用自身函数创建一个唯一后台任务，验证嵌入式包装器、自定义日志目录、无限运行时间、IgnoreNew 和 `stdout.log`；
-7. 验证清理自定义日志时不会删除非任务文件，并在 `finally` 中清理本次测试创建的所有任务及测试文件。
+6. 使用主应用自身函数创建一个唯一后台任务，验证直接 PowerShell action、Version 3 配置、无窗口、自定义日志目录、无限运行时间、IgnoreNew 和 `stdout.log`；
+7. 启动“包装器 → 目标进程 → 长时间运行孙进程”的真实进程树，验证 `Stop(0)` 通过 Job Object 将三层进程全部终止；
+8. 验证清理自定义日志时不会删除非任务文件，并在 `finally` 中清理本次测试创建的所有任务、进程及测试文件。
 
 测试不修改、禁用或删除任何既有任务，也不创建或删除任务文件夹。如果当前用户无权在根目录注册任务，测试会报告 Access denied 并退出，不请求提升。
 

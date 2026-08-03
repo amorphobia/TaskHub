@@ -64,8 +64,8 @@ $script:TASK_TRIGGER_DAILY = 2
 $script:TASK_TRIGGER_LOGON = 9
 $script:TASK_ACTION_EXEC = 0
 
-# These helpers are embedded so the project does not depend on standalone
-# wrapper.ps1 or run.vbs files. Background tasks receive private copies under
+# The wrapper is embedded so the project does not depend on standalone helper
+# files. Background tasks receive a private wrapper.ps1 copy under
 # %LOCALAPPDATA%\UserTaskManager\Tasks\<full-task-path-sha256>\.
 $script:BackgroundWrapperContent = @'
 #requires -version 5.1
@@ -80,16 +80,220 @@ $logDirectory = Join-Path $PSScriptRoot 'logs'
 $wrapperErrorPath = Join-Path $logDirectory 'wrapper-error.log'
 $exitCode = 1
 
-$streamPumpSource = @"
+$jobRunnerSource = @"
 using System;
-using System.Diagnostics;
+using System.ComponentModel;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace UserTaskManager
 {
     public static class BackgroundProcessRunner
     {
+        const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+        const int JobObjectExtendedLimitInformation = 9;
+        const uint CREATE_SUSPENDED = 0x00000004;
+        const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
+        const uint CREATE_NO_WINDOW = 0x08000000;
+        const uint STARTF_USESHOWWINDOW = 0x00000001;
+        const uint STARTF_USESTDHANDLES = 0x00000100;
+        const short SW_HIDE = 0;
+        const uint HANDLE_FLAG_INHERIT = 0x00000001;
+        const uint GENERIC_READ = 0x80000000;
+        const uint FILE_SHARE_READ = 0x00000001;
+        const uint FILE_SHARE_WRITE = 0x00000002;
+        const uint OPEN_EXISTING = 3;
+        const uint WAIT_OBJECT_0 = 0x00000000;
+        const uint WAIT_FAILED = 0xFFFFFFFF;
+        const uint INFINITE = 0xFFFFFFFF;
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct SECURITY_ATTRIBUTES
+        {
+            public int nLength;
+            public IntPtr lpSecurityDescriptor;
+            public int bInheritHandle;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct STARTUPINFO
+        {
+            public int cb;
+            public string lpReserved;
+            public string lpDesktop;
+            public string lpTitle;
+            public uint dwX;
+            public uint dwY;
+            public uint dwXSize;
+            public uint dwYSize;
+            public uint dwXCountChars;
+            public uint dwYCountChars;
+            public uint dwFillAttribute;
+            public uint dwFlags;
+            public short wShowWindow;
+            public short cbReserved2;
+            public IntPtr lpReserved2;
+            public IntPtr hStdInput;
+            public IntPtr hStdOutput;
+            public IntPtr hStdError;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct PROCESS_INFORMATION
+        {
+            public IntPtr hProcess;
+            public IntPtr hThread;
+            public uint dwProcessId;
+            public uint dwThreadId;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+        {
+            public long PerProcessUserTimeLimit;
+            public long PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize;
+            public UIntPtr MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass;
+            public uint SchedulingClass;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct IO_COUNTERS
+        {
+            public ulong ReadOperationCount;
+            public ulong WriteOperationCount;
+            public ulong OtherOperationCount;
+            public ulong ReadTransferCount;
+            public ulong WriteTransferCount;
+            public ulong OtherTransferCount;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        {
+            public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+            public IO_COUNTERS IoInfo;
+            public UIntPtr ProcessMemoryLimit;
+            public UIntPtr JobMemoryLimit;
+            public UIntPtr PeakProcessMemoryUsed;
+            public UIntPtr PeakJobMemoryUsed;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern IntPtr CreateJobObject(IntPtr jobAttributes, string name);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetInformationJobObject(
+            IntPtr job,
+            int informationClass,
+            IntPtr information,
+            uint informationLength);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern bool CreateProcess(
+            string applicationName,
+            StringBuilder commandLine,
+            IntPtr processAttributes,
+            IntPtr threadAttributes,
+            bool inheritHandles,
+            uint creationFlags,
+            IntPtr environment,
+            string currentDirectory,
+            ref STARTUPINFO startupInfo,
+            out PROCESS_INFORMATION processInformation);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern IntPtr CreateFile(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            ref SECURITY_ATTRIBUTES securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern uint ResumeThread(IntPtr thread);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool TerminateProcess(IntPtr process, uint exitCode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool CloseHandle(IntPtr handle);
+
+        static void ThrowLastWin32Error(string operation)
+        {
+            int error = Marshal.GetLastWin32Error();
+            throw new Win32Exception(error, operation + " failed");
+        }
+
+        static string QuoteCommandLineArgument(string value)
+        {
+            if (value == null) value = String.Empty;
+            StringBuilder result = new StringBuilder();
+            result.Append('"');
+            int slashCount = 0;
+            foreach (char current in value)
+            {
+                if (current == '\\')
+                {
+                    slashCount++;
+                }
+                else if (current == '"')
+                {
+                    result.Append('\\', slashCount * 2 + 1);
+                    result.Append('"');
+                    slashCount = 0;
+                }
+                else
+                {
+                    result.Append('\\', slashCount);
+                    result.Append(current);
+                    slashCount = 0;
+                }
+            }
+            result.Append('\\', slashCount * 2);
+            result.Append('"');
+            return result.ToString();
+        }
+
+        static void ConfigureKillOnClose(IntPtr job)
+        {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits =
+                new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            int size = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+            IntPtr buffer = Marshal.AllocHGlobal(size);
+            try
+            {
+                Marshal.StructureToPtr(limits, buffer, false);
+                if (!SetInformationJobObject(
+                    job, JobObjectExtendedLimitInformation, buffer, (uint)size))
+                    ThrowLastWin32Error("SetInformationJobObject");
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
         public static int Run(
             string executable,
             string arguments,
@@ -97,61 +301,133 @@ namespace UserTaskManager
             string stdoutPath,
             string stderrPath)
         {
-            using (var stdoutFile = new FileStream(
-                stdoutPath, FileMode.Create, FileAccess.Write, FileShare.Read))
-            using (var stderrFile = new FileStream(
-                stderrPath, FileMode.Create, FileAccess.Write, FileShare.Read))
-            using (var stdout = new StreamWriter(stdoutFile, new UTF8Encoding(false)))
-            using (var stderr = new StreamWriter(stderrFile, new UTF8Encoding(false)))
-            using (var process = new Process())
+            if (String.IsNullOrWhiteSpace(executable))
+                throw new ArgumentException("Executable is empty.", "executable");
+
+            IntPtr job = IntPtr.Zero;
+            IntPtr nullInput = IntPtr.Zero;
+            FileStream stdoutFile = null;
+            FileStream stderrFile = null;
+            PROCESS_INFORMATION process = new PROCESS_INFORMATION();
+            bool processCreated = false;
+            bool processAssigned = false;
+            bool stdoutInheritable = false;
+            bool stderrInheritable = false;
+
+            try
             {
-                stdout.AutoFlush = true;
-                stderr.AutoFlush = true;
+                stdoutFile = new FileStream(
+                    stdoutPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+                stderrFile = new FileStream(
+                    stderrPath, FileMode.Create, FileAccess.Write, FileShare.Read);
 
-                process.StartInfo = new ProcessStartInfo
-                {
-                    FileName = executable,
-                    Arguments = arguments ?? String.Empty,
-                    WorkingDirectory = workingDirectory ?? String.Empty,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    WindowStyle = ProcessWindowStyle.Hidden,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
+                job = CreateJobObject(IntPtr.Zero, null);
+                if (job == IntPtr.Zero) ThrowLastWin32Error("CreateJobObject");
+                ConfigureKillOnClose(job);
 
-                object stdoutLock = new object();
-                object stderrLock = new object();
-                process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e)
-                {
-                    if (e.Data != null)
-                    {
-                        lock (stdoutLock) { stdout.WriteLine(e.Data); }
-                    }
-                };
-                process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e)
-                {
-                    if (e.Data != null)
-                    {
-                        lock (stderrLock) { stderr.WriteLine(e.Data); }
-                    }
-                };
+                SECURITY_ATTRIBUTES inheritable = new SECURITY_ATTRIBUTES();
+                inheritable.nLength = Marshal.SizeOf(typeof(SECURITY_ATTRIBUTES));
+                inheritable.bInheritHandle = 1;
+                nullInput = CreateFile(
+                    "NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    ref inheritable, OPEN_EXISTING, 0, IntPtr.Zero);
+                if (nullInput == new IntPtr(-1)) ThrowLastWin32Error("CreateFile(NUL)");
 
-                if (!process.Start())
-                    throw new InvalidOperationException("Failed to start executable: " + executable);
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-                process.WaitForExit();
-                // A second wait ensures asynchronous output event handlers finish.
-                process.WaitForExit();
-                return process.ExitCode;
+                IntPtr stdoutHandle = stdoutFile.SafeFileHandle.DangerousGetHandle();
+                IntPtr stderrHandle = stderrFile.SafeFileHandle.DangerousGetHandle();
+                if (!SetHandleInformation(
+                    stdoutHandle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT))
+                    ThrowLastWin32Error("SetHandleInformation(stdout)");
+                stdoutInheritable = true;
+                if (!SetHandleInformation(
+                    stderrHandle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT))
+                    ThrowLastWin32Error("SetHandleInformation(stderr)");
+                stderrInheritable = true;
+
+                STARTUPINFO startup = new STARTUPINFO();
+                startup.cb = Marshal.SizeOf(typeof(STARTUPINFO));
+                startup.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+                startup.wShowWindow = SW_HIDE;
+                startup.hStdInput = nullInput;
+                startup.hStdOutput = stdoutHandle;
+                startup.hStdError = stderrHandle;
+
+                string commandText = QuoteCommandLineArgument(executable);
+                if (!String.IsNullOrWhiteSpace(arguments))
+                    commandText += " " + arguments;
+                StringBuilder commandLine = new StringBuilder(commandText);
+                string currentDirectory = String.IsNullOrWhiteSpace(workingDirectory)
+                    ? null
+                    : workingDirectory;
+
+                if (!CreateProcess(
+                    executable,
+                    commandLine,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    true,
+                    CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+                    IntPtr.Zero,
+                    currentDirectory,
+                    ref startup,
+                    out process))
+                    ThrowLastWin32Error("CreateProcess");
+                processCreated = true;
+
+                SetHandleInformation(stdoutHandle, HANDLE_FLAG_INHERIT, 0);
+                stdoutInheritable = false;
+                SetHandleInformation(stderrHandle, HANDLE_FLAG_INHERIT, 0);
+                stderrInheritable = false;
+
+                if (!AssignProcessToJobObject(job, process.hProcess))
+                    ThrowLastWin32Error("AssignProcessToJobObject");
+                processAssigned = true;
+
+                if (ResumeThread(process.hThread) == UInt32.MaxValue)
+                    ThrowLastWin32Error("ResumeThread");
+
+                uint waitResult = WaitForSingleObject(process.hProcess, INFINITE);
+                if (waitResult == WAIT_FAILED)
+                    ThrowLastWin32Error("WaitForSingleObject");
+                if (waitResult != WAIT_OBJECT_0)
+                    throw new InvalidOperationException(
+                        "Unexpected process wait result: " + waitResult.ToString());
+
+                uint exitCode;
+                if (!GetExitCodeProcess(process.hProcess, out exitCode))
+                    ThrowLastWin32Error("GetExitCodeProcess");
+                return unchecked((int)exitCode);
+            }
+            finally
+            {
+                if (stdoutInheritable && stdoutFile != null)
+                    SetHandleInformation(
+                        stdoutFile.SafeFileHandle.DangerousGetHandle(),
+                        HANDLE_FLAG_INHERIT,
+                        0);
+                if (stderrInheritable && stderrFile != null)
+                    SetHandleInformation(
+                        stderrFile.SafeFileHandle.DangerousGetHandle(),
+                        HANDLE_FLAG_INHERIT,
+                        0);
+                if (processCreated && !processAssigned && process.hProcess != IntPtr.Zero)
+                    TerminateProcess(process.hProcess, 1);
+                if (process.hThread != IntPtr.Zero) CloseHandle(process.hThread);
+                if (process.hProcess != IntPtr.Zero) CloseHandle(process.hProcess);
+                if (stdoutFile != null) stdoutFile.Dispose();
+                if (stderrFile != null) stderrFile.Dispose();
+                if (nullInput != IntPtr.Zero && nullInput != new IntPtr(-1))
+                    CloseHandle(nullInput);
+                // Closing the last non-inheritable job handle terminates every
+                // still-running target process in the job, including descendants.
+                if (job != IntPtr.Zero) CloseHandle(job);
             }
         }
     }
 }
 "@
 try {
-    Add-Type -TypeDefinition $streamPumpSource -Language CSharp
+    Add-Type -TypeDefinition $jobRunnerSource -Language CSharp
     if (-not [IO.File]::Exists($configPath)) {
         throw ('Background configuration does not exist: {0}' -f $configPath)
     }
@@ -169,7 +445,7 @@ try {
     }
 
     # The executable and raw Windows argument string are passed directly to
-    # ProcessStartInfo. No PowerShell or cmd.exe reparsing is introduced.
+    # CreateProcessW. No PowerShell or cmd.exe reparsing is introduced.
     $exitCode = [UserTaskManager.BackgroundProcessRunner]::Run(
         [string]$config.Executable,
         [string]$config.Arguments,
@@ -190,26 +466,6 @@ catch {
     $exitCode = 1
 }
 exit $exitCode
-'@
-
-$script:BackgroundVbsContent = @'
-Option Explicit
-
-Dim shell, fileSystem, scriptDirectory, wrapperPath, powershellPath, commandLine, exitCode
-Set shell = CreateObject("WScript.Shell")
-Set fileSystem = CreateObject("Scripting.FileSystemObject")
-
-scriptDirectory = fileSystem.GetParentFolderName(WScript.ScriptFullName)
-wrapperPath = fileSystem.BuildPath(scriptDirectory, "wrapper.ps1")
-powershellPath = shell.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
-commandLine = QuoteArgument(powershellPath) & " -NoLogo -NoProfile -NonInteractive -File " & QuoteArgument(wrapperPath)
-
-exitCode = shell.Run(commandLine, 0, True)
-WScript.Quit exitCode
-
-Function QuoteArgument(ByVal value)
-    QuoteArgument = Chr(34) & Replace(value, Chr(34), Chr(34) & Chr(34)) & Chr(34)
-End Function
 '@
 
 function Write-AppLog {
@@ -478,27 +734,39 @@ function New-BackgroundActionValues {
     )
     $runVbsPath = Join-Path $RuntimeDirectory 'run.vbs'
     $wscriptPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
+    $powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $wrapperPath = Join-Path $RuntimeDirectory 'wrapper.ps1'
+    $actionPath = $wscriptPath
+    $actionArguments = '//B //Nologo "{0}"' -f $runVbsPath
+    if ($Scheme -eq 'DirectPowerShellV3') {
+        $actionPath = $powershellPath
+        $actionArguments = '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File "{0}"' -f $wrapperPath
+    }
     return [PSCustomObject]@{
         Scheme = $Scheme
         RuntimeDirectory = $RuntimeDirectory
         RunVbsPath = $runVbsPath
-        WrapperPath = Join-Path $RuntimeDirectory 'wrapper.ps1'
+        WrapperPath = $wrapperPath
         ConfigPath = Join-Path $RuntimeDirectory 'config.json'
         DefaultLogDirectory = Join-Path $RuntimeDirectory 'logs'
         WscriptPath = $wscriptPath
-        ActionArguments = '//B //Nologo "{0}"' -f $runVbsPath
+        PowershellPath = $powershellPath
+        ActionPath = $actionPath
+        ActionArguments = $actionArguments
     }
 }
 
 function Get-BackgroundActionValues {
     param([Parameter(Mandatory = $true)][string]$FullTaskPath)
-    return New-BackgroundActionValues -RuntimeDirectory (Get-BackgroundRuntimeDirectory $FullTaskPath) -Scheme 'HashedV2'
+    return New-BackgroundActionValues -RuntimeDirectory (Get-BackgroundRuntimeDirectory $FullTaskPath) -Scheme 'DirectPowerShellV3'
 }
 
 function Get-BackgroundActionCandidates {
     param([Parameter(Mandatory = $true)][string]$FullTaskPath)
     $candidates = New-Object 'System.Collections.Generic.List[object]'
     $candidates.Add((Get-BackgroundActionValues $FullTaskPath))
+    $hashedDirectory = Get-BackgroundRuntimeDirectory $FullTaskPath
+    $candidates.Add((New-BackgroundActionValues -RuntimeDirectory $hashedDirectory -Scheme 'HashedV2'))
     $legacyDirectory = Get-LegacyBackgroundRuntimeDirectory $FullTaskPath
     if (-not [string]::IsNullOrWhiteSpace($legacyDirectory)) {
         $candidates.Add((New-BackgroundActionValues -RuntimeDirectory $legacyDirectory -Scheme 'LegacyTaskName'))
@@ -557,21 +825,15 @@ function Get-BackgroundRuntimeInfo {
         [object]$Action
     )
     try {
-        if ($null -ne $Action) {
-            $expectedWscriptPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
-            if (-not [string]::Equals([string]$Action.Path, $expectedWscriptPath, [StringComparison]::OrdinalIgnoreCase)) {
-                return $null
-            }
-        }
         foreach ($values in @(Get-BackgroundActionCandidates $FullTaskPath)) {
             if ($null -ne $Action -and
-                (-not [string]::Equals([string]$Action.Path, $values.WscriptPath, [StringComparison]::OrdinalIgnoreCase) -or
+                (-not [string]::Equals([string]$Action.Path, $values.ActionPath, [StringComparison]::OrdinalIgnoreCase) -or
                  -not [string]::Equals([string]$Action.Arguments, $values.ActionArguments, [StringComparison]::OrdinalIgnoreCase))) {
                 continue
             }
             $config = Read-BackgroundConfig $values.ConfigPath
             if ($null -eq $config -or $null -eq $config.PSObject.Properties['Version'] -or
-                @(1, 2) -notcontains [int]$config.Version -or
+                @(1, 2, 3) -notcontains [int]$config.Version -or
                 -not [string]::Equals([string]$config.TaskFullPath, $FullTaskPath, [StringComparison]::OrdinalIgnoreCase)) {
                 continue
             }
@@ -594,6 +856,8 @@ function Get-BackgroundRuntimeInfo {
                 StdErrPath = Join-Path $resolvedLog.Path 'stderr.log'
                 WrapperErrorPath = Join-Path $resolvedLog.Path 'wrapper-error.log'
                 WscriptPath = $values.WscriptPath
+                PowershellPath = $values.PowershellPath
+                ActionPath = $values.ActionPath
                 ActionArguments = $values.ActionArguments
                 Config = $config
             }
@@ -613,7 +877,7 @@ function Test-ActionTargetsBackgroundRunner {
     )
     try {
         foreach ($values in @(Get-BackgroundActionCandidates $FullTaskPath)) {
-            if ([string]::Equals([string]$Action.Path, $values.WscriptPath, [StringComparison]::OrdinalIgnoreCase) -and
+            if ([string]::Equals([string]$Action.Path, $values.ActionPath, [StringComparison]::OrdinalIgnoreCase) -and
                 [string]::Equals([string]$Action.Arguments, $values.ActionArguments, [StringComparison]::OrdinalIgnoreCase)) {
                 return $true
             }
@@ -711,7 +975,7 @@ function Install-BackgroundRuntime {
 
     try {
         $config = [ordered]@{
-            Version = 2
+            Version = 3
             TaskFullPath = $FullTaskPath
             TaskName = [string]$Data.TaskName
             Executable = [string]$Data.Program
@@ -722,8 +986,10 @@ function Install-BackgroundRuntime {
         }
         $configJson = $config | ConvertTo-Json -Depth 3
         [IO.File]::WriteAllText($values.WrapperPath, $script:BackgroundWrapperContent, (New-Object Text.UTF8Encoding($true)))
-        [IO.File]::WriteAllText($values.RunVbsPath, $script:BackgroundVbsContent, [Text.Encoding]::Unicode)
         [IO.File]::WriteAllText($values.ConfigPath, $configJson, (New-Object Text.UTF8Encoding($true)))
+        if ([IO.File]::Exists($values.RunVbsPath)) {
+            [IO.File]::Delete($values.RunVbsPath)
+        }
         Write-AppLog -Message ('已部署后台运行文件：{0}' -f $values.RuntimeDirectory)
         return $state
     }
@@ -1746,7 +2012,7 @@ function Register-TaskFromData {
         $effectiveWorkingDirectory = [string]$Data.WorkingDirectory
         if ($backgroundMode) {
             $backgroundInstallState = Install-BackgroundRuntime -Data $Data -FullTaskPath $fullPath -OriginalFullPath $OriginalFullPath
-            $effectiveProgram = $backgroundInstallState.Values.WscriptPath
+            $effectiveProgram = $backgroundInstallState.Values.ActionPath
             $effectiveArguments = $backgroundInstallState.Values.ActionArguments
             $effectiveWorkingDirectory = $backgroundInstallState.Values.RuntimeDirectory
         }
@@ -2201,7 +2467,7 @@ function Show-DeleteTaskDialog {
     <TextBox x:Name="PathText" Grid.Row="1" Margin="0,10,0,10" IsReadOnly="True"
              TextWrapping="Wrap" BorderThickness="1" Padding="7"/>
     <TextBlock Grid.Row="2" Foreground="#A00000" TextWrapping="Wrap"
-               Text="任务删除后无法由本程序恢复。若这是后台应用，wrapper.ps1、run.vbs 和 config.json 会一并删除。"/>
+               Text="任务删除后无法由本程序恢复。若这是后台应用，wrapper.ps1、config.json 以及旧任务残留的 run.vbs 会一并删除。"/>
     <CheckBox x:Name="DeleteLogsBox" Grid.Row="3" Margin="0,14,0,0" VerticalAlignment="Top"
               Content="同时删除该后台任务生成的日志文件（自定义目录中的其他文件不会删除）"/>
     <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
