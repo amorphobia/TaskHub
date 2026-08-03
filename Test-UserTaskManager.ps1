@@ -44,6 +44,7 @@ $createdNames = New-Object 'System.Collections.Generic.List[string]'
 $results = New-Object 'System.Collections.Generic.List[string]'
 $service = $null
 $root = $null
+$backgroundCustomLogDirectory = $null
 
 function Release-ComObject {
     param([object]$Value)
@@ -239,6 +240,127 @@ try {
         Release-ComObject $controlTask
     }
 
+    # Exercise the actual embedded background runner and registration functions
+    # from UserTaskManager.ps1. Only one additional GUID-named task is touched.
+    $backgroundName = $uniquePrefix + '.后台'
+    $backgroundFullPath = '\' + $backgroundName
+    $backgroundFolder = $null
+    $backgroundTask = $null
+    $backgroundRunning = $null
+    $backgroundRuntime = $null
+    $backgroundRegistered = $false
+    $backgroundCustomLogDirectory = Join-Path $env:LOCALAPPDATA ('UserTaskManager\TestLogs\{0}' -f ([Guid]::NewGuid().ToString('N')))
+    $backgroundLogSentinel = Join-Path $backgroundCustomLogDirectory 'unrelated.keep'
+    try {
+        $mainScriptPath = Join-Path $PSScriptRoot 'UserTaskManager.ps1'
+        . $mainScriptPath -SmokeTest | ForEach-Object { Write-Host $_ }
+
+        $sameLeafA = Get-BackgroundRuntimeDirectory ('\FolderA\' + $backgroundName)
+        $sameLeafB = Get-BackgroundRuntimeDirectory ('\FolderB\' + $backgroundName)
+        Assert-True (-not [string]::Equals($sameLeafA, $sameLeafB, [StringComparison]::OrdinalIgnoreCase)) '不同文件夹中的同名任务使用不同后台运行目录'
+        Assert-True ([IO.Path]::GetFileName($sameLeafA) -match '^[0-9a-f]{64}$') '后台运行目录使用完整任务路径的 SHA-256 标识'
+        $defaultValues = Get-BackgroundActionValues $backgroundFullPath
+        $defaultLog = Resolve-BackgroundLogDirectory -RequestedPath '' -DefaultPath $defaultValues.DefaultLogDirectory
+        Assert-True ($defaultLog.IsDefault -and [string]::Equals($defaultLog.Path, [IO.Path]::GetFullPath($defaultValues.DefaultLogDirectory), [StringComparison]::OrdinalIgnoreCase)) '留空日志路径会解析到任务专属默认 logs 目录'
+
+        $backgroundData = [PSCustomObject]@{
+            TaskPath = '\'
+            TaskName = $backgroundName
+            Description = 'UserTaskManager 后台应用安全测试'
+            Enabled = $true
+            Program = Join-Path $env:SystemRoot 'System32\cmd.exe'
+            Arguments = '/d /c echo user-task-manager-background-ok'
+            WorkingDirectory = [Environment]::GetFolderPath('LocalApplicationData')
+            BackgroundMode = $true
+            LogDirectory = $backgroundCustomLogDirectory
+            TriggerKind = '单次'
+            StartDateTime = (Get-Date).AddHours(1)
+            RepeatMinutes = 0
+            Overwrite = $false
+        }
+        [void](Register-TaskFromData -Data $backgroundData)
+        $backgroundRegistered = $true
+
+        $editData = Get-TaskEditData -FullPath $backgroundFullPath
+        Assert-True ($editData.Supported -and $editData.BackgroundMode) '后台测试任务可由编辑器无损识别'
+        Assert-True ($editData.Program -eq $backgroundData.Program) '后台测试任务保留真实 executable 字段'
+        Assert-True ([string]::Equals($editData.LogDirectory, [IO.Path]::GetFullPath($backgroundCustomLogDirectory), [StringComparison]::OrdinalIgnoreCase)) '编辑器回显自定义日志目录'
+
+        Connect-TaskService
+        $backgroundFolder = $script:TaskService.GetFolder('\')
+        $backgroundTask = $backgroundFolder.GetTask($backgroundName)
+        $backgroundDefinition = $null
+        $backgroundActions = $null
+        $backgroundAction = $null
+        $backgroundSettings = $null
+        try {
+            $backgroundDefinition = $backgroundTask.Definition
+            $backgroundActions = $backgroundDefinition.Actions
+            $backgroundAction = $backgroundActions.Item(1)
+            $backgroundSettings = $backgroundDefinition.Settings
+            $backgroundRuntime = Get-BackgroundRuntimeInfo -FullTaskPath $backgroundFullPath -Action $backgroundAction
+            Assert-True ($null -ne $backgroundRuntime) '后台测试任务使用嵌入式 wscript 包装器'
+            Assert-True (-not [bool]$backgroundRuntime.LogDirectoryIsDefault) '后台测试任务识别为自定义日志目录'
+            Assert-True ([string]::Equals($backgroundRuntime.LogDirectory, [IO.Path]::GetFullPath($backgroundCustomLogDirectory), [StringComparison]::OrdinalIgnoreCase)) '后台任务日志写入规范化的自定义目录'
+            Assert-True ([string]$backgroundSettings.ExecutionTimeLimit -eq 'PT0S') '后台测试任务没有 72 小时执行上限'
+            Assert-True ([int]$backgroundSettings.MultipleInstances -eq 2) '后台测试任务使用 IgnoreNew 多实例策略'
+        }
+        finally {
+            Release-ComObject $backgroundSettings
+            Release-ComObject $backgroundAction
+            Release-ComObject $backgroundActions
+            Release-ComObject $backgroundDefinition
+        }
+
+        $backgroundRunning = $backgroundTask.Run($null)
+        $deadline = (Get-Date).AddSeconds(15)
+        $capturedOutput = ''
+        do {
+            Start-Sleep -Milliseconds 250
+            if ([IO.File]::Exists($backgroundRuntime.StdOutPath)) {
+                $capturedOutput = [IO.File]::ReadAllText($backgroundRuntime.StdOutPath)
+            }
+        } while ($capturedOutput -notmatch 'user-task-manager-background-ok' -and (Get-Date) -lt $deadline)
+        Assert-True ($capturedOutput -match 'user-task-manager-background-ok') '后台测试任务写入 stdout.log'
+        [IO.File]::WriteAllText($backgroundLogSentinel, 'must-not-delete', [Text.Encoding]::UTF8)
+
+        do {
+            Start-Sleep -Milliseconds 200
+        } while ([int]$backgroundTask.State -eq 4 -and (Get-Date) -lt $deadline)
+    }
+    finally {
+        Release-ComObject $backgroundRunning
+        Release-ComObject $backgroundTask
+        if ($backgroundRegistered -and $null -ne $backgroundFolder) {
+            try {
+                $backgroundFolder.DeleteTask($backgroundName, 0)
+                Write-Host ('已清理后台测试任务：{0}' -f $backgroundFullPath)
+            }
+            catch {
+                Write-Warning ('清理后台测试任务失败：{0}；{1}' -f $backgroundFullPath, $_.Exception.Message)
+            }
+        }
+        Release-ComObject $backgroundFolder
+        if ($null -ne $backgroundRuntime) {
+            try {
+                Remove-BackgroundRuntimeFiles -RuntimeInfo $backgroundRuntime -DeleteLogs $true
+                Write-Host ('已清理后台测试文件：{0}' -f $backgroundRuntime.RuntimeDirectory)
+            }
+            catch {
+                Write-Warning ('清理后台测试文件失败：{0}' -f $_.Exception.Message)
+            }
+        }
+        Release-ComObject $script:TaskService
+        $script:TaskService = $null
+    }
+
+    Assert-True ([IO.File]::Exists($backgroundLogSentinel)) '清理自定义日志时保留目录中的非任务文件'
+    [IO.File]::Delete($backgroundLogSentinel)
+    if ([IO.Directory]::Exists($backgroundCustomLogDirectory) -and
+        [IO.Directory]::GetFileSystemEntries($backgroundCustomLogDirectory).Count -eq 0) {
+        [IO.Directory]::Delete($backgroundCustomLogDirectory, $false)
+    }
+
     Write-Host ''
     Write-Host '全部测试通过：' -ForegroundColor Green
     $results | ForEach-Object { Write-Host ('  {0}' -f $_) }
@@ -267,6 +389,24 @@ finally {
     }
     Release-ComObject $root
     Release-ComObject $service
+    if (-not [string]::IsNullOrWhiteSpace($backgroundCustomLogDirectory)) {
+        try {
+            $testLogRoot = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'UserTaskManager\TestLogs'))
+            $testLogPath = [IO.Path]::GetFullPath($backgroundCustomLogDirectory)
+            $requiredPrefix = $testLogRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+            if ($testLogPath.StartsWith($requiredPrefix, [StringComparison]::OrdinalIgnoreCase) -and
+                [IO.Directory]::Exists($testLogPath)) {
+                [IO.Directory]::Delete($testLogPath, $true)
+            }
+            if ([IO.Directory]::Exists($testLogRoot) -and
+                [IO.Directory]::GetFileSystemEntries($testLogRoot).Count -eq 0) {
+                [IO.Directory]::Delete($testLogRoot, $false)
+            }
+        }
+        catch {
+            Write-Warning ('清理唯一测试日志目录失败：{0}；{1}' -f $backgroundCustomLogDirectory, $_.Exception.Message)
+        }
+    }
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
 }

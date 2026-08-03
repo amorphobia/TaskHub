@@ -46,12 +46,13 @@ UserTaskManager 是一个面向普通 Windows 用户的轻量级计划任务管�
 - 左侧枚举当前用户可见的任务文件夹。
 - 右侧显示所选文件夹中的任务名称、完整路径、状态、启用状态、运行账户、上次/下次运行时间、上次结果、触发器摘要和操作摘要。
 - 详情区显示当前任务的完整摘要。
-- 支持刷新、立即运行、停止、启用、禁用、创建、编辑、删除、查看 XML 和导出 XML。
+- 支持刷新、立即运行、停止、启用、禁用、创建、编辑、删除、查看 XML、导出 XML，以及打开所选后台任务的实际日志目录。
 - 创建任务时可自由填写 `TaskPath`、`TaskName` 和 Description。
 - `TaskPath` 默认为当前选中的文件夹（根目录为 `\`），也可以从可见文件夹中选择或输入新路径。
 - 路径不存在时，程序逐级调用 Task Scheduler COM API 尝试创建。拒绝访问时原样报告，不提升，也不回退到其他目录。
 - 支持登录、单次和每日触发器；单次和每日触发器可设置分钟级重复间隔。
 - executable、arguments 和 working directory 分别写入 Exec action，不拼接为需要 PowerShell 或 shell 重新解释的命令。
+- 可将任务设为“后台应用”：计划任务通过 `wscript.exe` 无窗口启动嵌入式包装器，适合 `python -m http.server` 等需要长期运行并记录标准输出的程序。
 - 同名覆盖、编辑、移动/重命名和删除前均显示完整任务路径并要求确认。
 - 对事件触发器、Boot trigger、COM Handler、多操作、多个触发器、最高权限、非 InteractiveToken 或编辑器无法忠实表达的高级结构，编辑器保持只读，避免覆盖原定义。XML 仍可查看或导出。
 
@@ -79,6 +80,39 @@ Access denied（拒绝访问）。当前用户令牌没有此任务或文件夹�
 
 GUI 不提供 SYSTEM、LocalService、NetworkService、其他用户、HighestAvailable、密码登录、注销后保存密码运行或 Boot trigger 等选项。
 
+## 后台应用
+
+创建或编辑任务时勾选“后台应用（无控制台窗口，记录 stdout/stderr）”。UserTaskManager 会为该任务部署：
+
+```text
+%LOCALAPPDATA%\UserTaskManager\Tasks\<完整任务路径的 SHA-256>\
+├── run.vbs
+├── wrapper.ps1
+├── config.json
+└── logs\
+    ├── stdout.log
+    ├── stderr.log
+    └── wrapper-error.log（仅包装器启动失败时出现）
+```
+
+运行目录的标识由规范化后的完整任务路径（TaskPath + TaskName，不区分大小写）计算。因而不同任务文件夹中的同名任务具有不同目录，可以同时使用后台模式；目录内的 `config.json` 还会核对完整任务路径。
+
+`run.vbs` 和 `wrapper.ps1` 的模板已经嵌入 `UserTaskManager.ps1`，项目目录不需要独立副本。创建任务时，程序将它们释放到任务专用目录。`config.json` 分别保存目标 executable、arguments、working directory、日志目录和完整 Task Scheduler 路径。
+
+编辑器中的“日志目录（可选）”仅用于后台应用。留空时使用上述任务专用目录内的 `logs`；也可以填写或浏览选择一个绝对路径作为自定义日志目录。主窗口选择后台任务后点击“打开任务日志”，程序会从该任务的当前配置读取并打开实际目录，因此默认目录和自定义目录都适用。
+
+计划任务本身只执行系统自带的：
+
+```text
+%SystemRoot%\System32\wscript.exe //B //Nologo "...\run.vbs"
+```
+
+VBS 使用窗口样式 `0` 启动 Windows PowerShell 5.1；包装器通过 .NET `ProcessStartInfo` 直接启动目标程序、等待其结束并把退出码返回给 Task Scheduler。stdout/stderr 由异步事件写入允许共享读取的 UTF-8 日志，避免两个管道互相阻塞。整个链路不使用 `ExecutionPolicy Bypass`，也不请求提升。
+
+后台任务使用无限执行时间（`PT0S`），不会沿用普通任务的 72 小时上限；多实例策略设为 IgnoreNew，已有服务实例运行时不会因重复触发再启动一个实例。
+
+删除后台任务时，`wrapper.ps1`、`run.vbs` 和 `config.json` 始终删除。删除确认框中可以选择是否同时删除日志；默认保留日志。默认日志目录可以整体清理；对于自定义目录，程序只删除该任务生成的 `stdout.log`、`stderr.log` 和 `wrapper-error.log`，不会递归删除目录中的其他文件。若长期运行的进程仍占用日志，程序会有限重试，之后保留日志并给出明确提示。
+
 ## 日志
 
 日志路径：
@@ -88,6 +122,10 @@ GUI 不提供 SYSTEM、LocalService、NetworkService、其他用户、HighestAva
 ```
 
 日志记录连接、刷新、跳过的对象、成功操作及友好错误；不记录密码或敏感环境变量。用户填写的任务路径可能出现在操作和错误日志中。
+
+后台任务自己的 stdout/stderr 不写入主应用日志，而是写入默认或用户指定的任务日志目录。每次启动会重新创建 `stdout.log` 和 `stderr.log`。可在主窗口选择后台任务后点击“打开任务日志”直接访问该目录。
+
+日志何时出现仍受目标程序自身的输出缓冲策略影响。例如 Python 程序需要即时刷新时可使用 Python 自己的 `-u` 参数；UserTaskManager 不会改写目标程序的缓冲行为。
 
 ## 安全测试
 
@@ -103,7 +141,9 @@ GUI 不提供 SYSTEM、LocalService、NetworkService、其他用户、HighestAva
 2. 验证登录、单次、每日触发器；
 3. 验证 InteractiveToken、LeastPrivilege 和独立的 action 字段；
 4. 仅对唯一测试任务执行启用、禁用、立即运行和停止；
-5. 在 `finally` 中清理本次测试创建的所有任务。
+5. 验证不同文件夹中的同名任务会映射到不同的 SHA-256 后台运行目录；
+6. 使用主应用自身函数创建一个唯一后台任务，验证嵌入式包装器、自定义日志目录、无限运行时间、IgnoreNew 和 `stdout.log`；
+7. 验证清理自定义日志时不会删除非任务文件，并在 `finally` 中清理本次测试创建的所有任务及测试文件。
 
 测试不修改、禁用或删除任何既有任务，也不创建或删除任务文件夹。如果当前用户无权在根目录注册任务，测试会报告 Access denied 并退出，不请求提升。
 
@@ -113,6 +153,7 @@ GUI 不提供 SYSTEM、LocalService、NetworkService、其他用户、HighestAva
 - 某些受保护系统文件夹可能完全无法枚举；这些拒绝会记入日志。
 - Task Scheduler 服务停止、被策略禁用或 COM 注册损坏时，应用只能显示错误。
 - 编辑器仅支持一个 Exec action 和一个登录/单次/每日触发器。高级任务保持只读。
+- 后台模式面向直接可执行程序。参数仍遵循目标程序自己的 Windows 命令行解析规则；UserTaskManager 不调用 `cmd.exe` 或 PowerShell 对参数做第二次解释。
 - 重命名或移动任务由“在目标注册，再删除原任务”完成。如果第二步被 ACL 拒绝，目标任务会保留，错误会明确说明原任务未删除。
 - 导出的任务 XML 使用 UTF-16，与 Task Scheduler COM 返回的 XML 声明一致。
 - WPF 界面需要交互式桌面会话；Windows Server Core 不支持此 GUI。

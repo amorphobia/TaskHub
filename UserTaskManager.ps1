@@ -64,6 +64,154 @@ $script:TASK_TRIGGER_DAILY = 2
 $script:TASK_TRIGGER_LOGON = 9
 $script:TASK_ACTION_EXEC = 0
 
+# These helpers are embedded so the project does not depend on standalone
+# wrapper.ps1 or run.vbs files. Background tasks receive private copies under
+# %LOCALAPPDATA%\UserTaskManager\Tasks\<full-task-path-sha256>\.
+$script:BackgroundWrapperContent = @'
+#requires -version 5.1
+[CmdletBinding()]
+param()
+
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = 'Stop'
+
+$configPath = Join-Path $PSScriptRoot 'config.json'
+$logDirectory = Join-Path $PSScriptRoot 'logs'
+$wrapperErrorPath = Join-Path $logDirectory 'wrapper-error.log'
+$exitCode = 1
+
+$streamPumpSource = @"
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+
+namespace UserTaskManager
+{
+    public static class BackgroundProcessRunner
+    {
+        public static int Run(
+            string executable,
+            string arguments,
+            string workingDirectory,
+            string stdoutPath,
+            string stderrPath)
+        {
+            using (var stdoutFile = new FileStream(
+                stdoutPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+            using (var stderrFile = new FileStream(
+                stderrPath, FileMode.Create, FileAccess.Write, FileShare.Read))
+            using (var stdout = new StreamWriter(stdoutFile, new UTF8Encoding(false)))
+            using (var stderr = new StreamWriter(stderrFile, new UTF8Encoding(false)))
+            using (var process = new Process())
+            {
+                stdout.AutoFlush = true;
+                stderr.AutoFlush = true;
+
+                process.StartInfo = new ProcessStartInfo
+                {
+                    FileName = executable,
+                    Arguments = arguments ?? String.Empty,
+                    WorkingDirectory = workingDirectory ?? String.Empty,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                object stdoutLock = new object();
+                object stderrLock = new object();
+                process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e)
+                {
+                    if (e.Data != null)
+                    {
+                        lock (stdoutLock) { stdout.WriteLine(e.Data); }
+                    }
+                };
+                process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e)
+                {
+                    if (e.Data != null)
+                    {
+                        lock (stderrLock) { stderr.WriteLine(e.Data); }
+                    }
+                };
+
+                if (!process.Start())
+                    throw new InvalidOperationException("Failed to start executable: " + executable);
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                process.WaitForExit();
+                // A second wait ensures asynchronous output event handlers finish.
+                process.WaitForExit();
+                return process.ExitCode;
+            }
+        }
+    }
+}
+"@
+try {
+    Add-Type -TypeDefinition $streamPumpSource -Language CSharp
+    if (-not [IO.File]::Exists($configPath)) {
+        throw ('Background configuration does not exist: {0}' -f $configPath)
+    }
+    $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($null -ne $config.PSObject.Properties['LogDirectory'] -and
+        -not [string]::IsNullOrWhiteSpace([string]$config.LogDirectory)) {
+        $logDirectory = [IO.Path]::GetFullPath([string]$config.LogDirectory)
+        $wrapperErrorPath = Join-Path $logDirectory 'wrapper-error.log'
+    }
+    if (-not [IO.Directory]::Exists($logDirectory)) {
+        [void][IO.Directory]::CreateDirectory($logDirectory)
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$config.Executable)) {
+        throw 'Executable is empty in config.json.'
+    }
+
+    # The executable and raw Windows argument string are passed directly to
+    # ProcessStartInfo. No PowerShell or cmd.exe reparsing is introduced.
+    $exitCode = [UserTaskManager.BackgroundProcessRunner]::Run(
+        [string]$config.Executable,
+        [string]$config.Arguments,
+        [string]$config.WorkingDirectory,
+        (Join-Path $logDirectory 'stdout.log'),
+        (Join-Path $logDirectory 'stderr.log')
+    )
+}
+catch {
+    try {
+        if (-not [IO.Directory]::Exists($logDirectory)) {
+            [void][IO.Directory]::CreateDirectory($logDirectory)
+        }
+        $message = '{0} {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $_.Exception.Message
+        [IO.File]::AppendAllText($wrapperErrorPath, $message + [Environment]::NewLine, [Text.Encoding]::UTF8)
+    }
+    catch {}
+    $exitCode = 1
+}
+exit $exitCode
+'@
+
+$script:BackgroundVbsContent = @'
+Option Explicit
+
+Dim shell, fileSystem, scriptDirectory, wrapperPath, powershellPath, commandLine, exitCode
+Set shell = CreateObject("WScript.Shell")
+Set fileSystem = CreateObject("Scripting.FileSystemObject")
+
+scriptDirectory = fileSystem.GetParentFolderName(WScript.ScriptFullName)
+wrapperPath = fileSystem.BuildPath(scriptDirectory, "wrapper.ps1")
+powershellPath = shell.ExpandEnvironmentStrings("%SystemRoot%") & "\System32\WindowsPowerShell\v1.0\powershell.exe"
+commandLine = QuoteArgument(powershellPath) & " -NoLogo -NoProfile -NonInteractive -File " & QuoteArgument(wrapperPath)
+
+exitCode = shell.Run(commandLine, 0, True)
+WScript.Quit exitCode
+
+Function QuoteArgument(ByVal value)
+    QuoteArgument = Chr(34) & Replace(value, Chr(34), Chr(34) & Chr(34)) & Chr(34)
+End Function
+'@
+
 function Write-AppLog {
     param(
         [ValidateSet('INFO', 'WARN', 'ERROR')]
@@ -280,6 +428,418 @@ function Test-FolderPath {
     }
 }
 
+function Get-NormalizedTaskFullPath {
+    param([Parameter(Mandatory = $true)][string]$FullTaskPath)
+    $parts = Split-RegisteredTaskPath $FullTaskPath
+    $nameError = Test-TaskName $parts.Name
+    if ($null -ne $nameError) { throw $nameError }
+    return Join-TaskFullPath (Normalize-FolderPath $parts.Folder) $parts.Name
+}
+
+function Get-TaskPathHash {
+    param([Parameter(Mandatory = $true)][string]$FullTaskPath)
+    $normalizedIdentity = (Get-NormalizedTaskFullPath $FullTaskPath).ToUpperInvariant()
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha256.ComputeHash([Text.Encoding]::Unicode.GetBytes($normalizedIdentity))
+        return ([BitConverter]::ToString($hashBytes)).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-BackgroundRuntimeDirectory {
+    param([Parameter(Mandatory = $true)][string]$FullTaskPath)
+    $runtimeRoot = [IO.Path]::GetFullPath((Join-Path $script:LogDirectory 'Tasks'))
+    $runtimeDirectory = [IO.Path]::GetFullPath((Join-Path $runtimeRoot (Get-TaskPathHash $FullTaskPath)))
+    $requiredPrefix = $runtimeRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $runtimeDirectory.StartsWith($requiredPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw '后台任务运行目录超出了 UserTaskManager Tasks 数据目录。'
+    }
+    return $runtimeDirectory
+}
+
+function Get-LegacyBackgroundRuntimeDirectory {
+    param([Parameter(Mandatory = $true)][string]$FullTaskPath)
+    $parts = Split-RegisteredTaskPath $FullTaskPath
+    if ($parts.Name.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0) { return $null }
+    $runtimeRoot = [IO.Path]::GetFullPath($script:LogDirectory)
+    $legacyDirectory = [IO.Path]::GetFullPath((Join-Path $runtimeRoot $parts.Name))
+    $requiredPrefix = $runtimeRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $legacyDirectory.StartsWith($requiredPrefix, [StringComparison]::OrdinalIgnoreCase)) { return $null }
+    return $legacyDirectory
+}
+
+function New-BackgroundActionValues {
+    param(
+        [Parameter(Mandatory = $true)][string]$RuntimeDirectory,
+        [Parameter(Mandatory = $true)][string]$Scheme
+    )
+    $runVbsPath = Join-Path $RuntimeDirectory 'run.vbs'
+    $wscriptPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
+    return [PSCustomObject]@{
+        Scheme = $Scheme
+        RuntimeDirectory = $RuntimeDirectory
+        RunVbsPath = $runVbsPath
+        WrapperPath = Join-Path $RuntimeDirectory 'wrapper.ps1'
+        ConfigPath = Join-Path $RuntimeDirectory 'config.json'
+        DefaultLogDirectory = Join-Path $RuntimeDirectory 'logs'
+        WscriptPath = $wscriptPath
+        ActionArguments = '//B //Nologo "{0}"' -f $runVbsPath
+    }
+}
+
+function Get-BackgroundActionValues {
+    param([Parameter(Mandatory = $true)][string]$FullTaskPath)
+    return New-BackgroundActionValues -RuntimeDirectory (Get-BackgroundRuntimeDirectory $FullTaskPath) -Scheme 'HashedV2'
+}
+
+function Get-BackgroundActionCandidates {
+    param([Parameter(Mandatory = $true)][string]$FullTaskPath)
+    $candidates = New-Object 'System.Collections.Generic.List[object]'
+    $candidates.Add((Get-BackgroundActionValues $FullTaskPath))
+    $legacyDirectory = Get-LegacyBackgroundRuntimeDirectory $FullTaskPath
+    if (-not [string]::IsNullOrWhiteSpace($legacyDirectory)) {
+        $candidates.Add((New-BackgroundActionValues -RuntimeDirectory $legacyDirectory -Scheme 'LegacyTaskName'))
+    }
+    return $candidates
+}
+
+function Resolve-BackgroundLogDirectory {
+    param(
+        [AllowEmptyString()][string]$RequestedPath,
+        [Parameter(Mandatory = $true)][string]$DefaultPath
+    )
+    $defaultFullPath = [IO.Path]::GetFullPath($DefaultPath)
+    if ([string]::IsNullOrWhiteSpace($RequestedPath)) {
+        return [PSCustomObject]@{ Path = $defaultFullPath; IsDefault = $true }
+    }
+    if ($RequestedPath.IndexOf([char]0) -ge 0) {
+        throw '日志目录包含无效字符。'
+    }
+    $expandedPath = [Environment]::ExpandEnvironmentVariables($RequestedPath.Trim())
+    if (-not [IO.Path]::IsPathRooted($expandedPath)) {
+        throw '自定义日志目录必须是绝对路径。'
+    }
+    $customFullPath = [IO.Path]::GetFullPath($expandedPath)
+    $customRoot = [IO.Path]::GetPathRoot($customFullPath)
+    if (-not [string]::Equals($customFullPath, $customRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        $customFullPath = $customFullPath.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    }
+    $defaultComparable = $defaultFullPath
+    $defaultRoot = [IO.Path]::GetPathRoot($defaultComparable)
+    if (-not [string]::Equals($defaultComparable, $defaultRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        $defaultComparable = $defaultComparable.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    }
+    return [PSCustomObject]@{
+        Path = $customFullPath
+        IsDefault = [string]::Equals($customFullPath, $defaultComparable, [StringComparison]::OrdinalIgnoreCase)
+    }
+}
+
+function Read-BackgroundConfig {
+    param([Parameter(Mandatory = $true)][string]$ConfigPath)
+    if (-not [IO.File]::Exists($ConfigPath)) { return $null }
+    try {
+        $json = [IO.File]::ReadAllText($ConfigPath, [Text.Encoding]::UTF8)
+        return $json | ConvertFrom-Json
+    }
+    catch {
+        Write-AppLog -Level WARN -Message ('无法读取后台任务配置 {0}：{1}' -f $ConfigPath, $_.Exception.Message)
+        return $null
+    }
+}
+
+function Get-BackgroundRuntimeInfo {
+    param(
+        [Parameter(Mandatory = $true)][string]$FullTaskPath,
+        [object]$Action
+    )
+    try {
+        if ($null -ne $Action) {
+            $expectedWscriptPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
+            if (-not [string]::Equals([string]$Action.Path, $expectedWscriptPath, [StringComparison]::OrdinalIgnoreCase)) {
+                return $null
+            }
+        }
+        foreach ($values in @(Get-BackgroundActionCandidates $FullTaskPath)) {
+            if ($null -ne $Action -and
+                (-not [string]::Equals([string]$Action.Path, $values.WscriptPath, [StringComparison]::OrdinalIgnoreCase) -or
+                 -not [string]::Equals([string]$Action.Arguments, $values.ActionArguments, [StringComparison]::OrdinalIgnoreCase))) {
+                continue
+            }
+            $config = Read-BackgroundConfig $values.ConfigPath
+            if ($null -eq $config -or $null -eq $config.PSObject.Properties['Version'] -or
+                @(1, 2) -notcontains [int]$config.Version -or
+                -not [string]::Equals([string]$config.TaskFullPath, $FullTaskPath, [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+            $requestedLogDirectory = ''
+            if ($null -ne $config.PSObject.Properties['LogDirectory']) {
+                $requestedLogDirectory = [string]$config.LogDirectory
+            }
+            $resolvedLog = Resolve-BackgroundLogDirectory -RequestedPath $requestedLogDirectory -DefaultPath $values.DefaultLogDirectory
+            return [PSCustomObject]@{
+                FullTaskPath = $FullTaskPath
+                Scheme = $values.Scheme
+                RuntimeDirectory = $values.RuntimeDirectory
+                RunVbsPath = $values.RunVbsPath
+                WrapperPath = $values.WrapperPath
+                ConfigPath = $values.ConfigPath
+                DefaultLogDirectory = $values.DefaultLogDirectory
+                LogDirectory = $resolvedLog.Path
+                LogDirectoryIsDefault = $resolvedLog.IsDefault
+                StdOutPath = Join-Path $resolvedLog.Path 'stdout.log'
+                StdErrPath = Join-Path $resolvedLog.Path 'stderr.log'
+                WrapperErrorPath = Join-Path $resolvedLog.Path 'wrapper-error.log'
+                WscriptPath = $values.WscriptPath
+                ActionArguments = $values.ActionArguments
+                Config = $config
+            }
+        }
+        return $null
+    }
+    catch {
+        Write-AppLog -Level WARN -Message ('识别后台任务 {0} 失败：{1}' -f $FullTaskPath, $_.Exception.Message)
+        return $null
+    }
+}
+
+function Test-ActionTargetsBackgroundRunner {
+    param(
+        [Parameter(Mandatory = $true)][string]$FullTaskPath,
+        [Parameter(Mandatory = $true)][object]$Action
+    )
+    try {
+        foreach ($values in @(Get-BackgroundActionCandidates $FullTaskPath)) {
+            if ([string]::Equals([string]$Action.Path, $values.WscriptPath, [StringComparison]::OrdinalIgnoreCase) -and
+                [string]::Equals([string]$Action.Arguments, $values.ActionArguments, [StringComparison]::OrdinalIgnoreCase)) {
+                return $true
+            }
+        }
+        return $false
+    }
+    catch {
+        return $false
+    }
+}
+
+function Restore-BackgroundRuntimeState {
+    param([object]$State)
+    if ($null -eq $State) { return }
+    foreach ($entry in $State.PreviousFiles) {
+        try {
+            if ($entry.Existed) {
+                [IO.File]::WriteAllBytes($entry.Path, $entry.Bytes)
+            }
+            elseif ([IO.File]::Exists($entry.Path)) {
+                [IO.File]::Delete($entry.Path)
+            }
+        }
+        catch {
+            Write-AppLog -Level WARN -Message ('回滚后台运行文件失败 {0}：{1}' -f $entry.Path, $_.Exception.Message)
+        }
+    }
+    if ($null -ne $State.PSObject.Properties['CreatedLogDirectory'] -and $State.CreatedLogDirectory -and
+        $null -ne $State.PSObject.Properties['LogDirectory']) {
+        try {
+            if ([IO.Directory]::Exists($State.LogDirectory) -and
+                [IO.Directory]::GetFileSystemEntries($State.LogDirectory).Count -eq 0) {
+                [IO.Directory]::Delete($State.LogDirectory, $false)
+            }
+        }
+        catch {}
+    }
+    if ($State.CreatedDirectory) {
+        try {
+            if ([IO.Directory]::Exists($State.RuntimeDirectory)) {
+                [IO.Directory]::Delete($State.RuntimeDirectory, $true)
+            }
+        }
+        catch {}
+    }
+}
+
+function Install-BackgroundRuntime {
+    param(
+        [Parameter(Mandatory = $true)]$Data,
+        [Parameter(Mandatory = $true)][string]$FullTaskPath,
+        [string]$OriginalFullPath
+    )
+    $values = Get-BackgroundActionValues $FullTaskPath
+    $existingConfig = Read-BackgroundConfig $values.ConfigPath
+    if ($null -ne $existingConfig -and
+        -not [string]::Equals([string]$existingConfig.TaskFullPath, $FullTaskPath, [StringComparison]::OrdinalIgnoreCase) -and
+        ([string]::IsNullOrWhiteSpace($OriginalFullPath) -or
+            -not [string]::Equals([string]$existingConfig.TaskFullPath, $OriginalFullPath, [StringComparison]::OrdinalIgnoreCase))) {
+        throw ("后台运行目录已由另一个任务使用：{0}`n现有任务：{1}" -f $values.RuntimeDirectory, $existingConfig.TaskFullPath)
+    }
+
+    $createdDirectory = -not [IO.Directory]::Exists($values.RuntimeDirectory)
+    if ($createdDirectory) {
+        [void][IO.Directory]::CreateDirectory($values.RuntimeDirectory)
+    }
+    $requestedLogDirectory = ''
+    if ($null -ne $Data.PSObject.Properties['LogDirectory']) {
+        $requestedLogDirectory = [string]$Data.LogDirectory
+    }
+    $resolvedLog = Resolve-BackgroundLogDirectory -RequestedPath $requestedLogDirectory -DefaultPath $values.DefaultLogDirectory
+    $createdLogDirectory = -not [IO.Directory]::Exists($resolvedLog.Path)
+    if ($createdLogDirectory) {
+        [void][IO.Directory]::CreateDirectory($resolvedLog.Path)
+    }
+
+    $managedPaths = @($values.WrapperPath, $values.RunVbsPath, $values.ConfigPath)
+    $previousFiles = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($path in $managedPaths) {
+        $exists = [IO.File]::Exists($path)
+        $previousFiles.Add([PSCustomObject]@{
+            Path = $path
+            Existed = $exists
+            Bytes = if ($exists) { [IO.File]::ReadAllBytes($path) } else { $null }
+        })
+    }
+    $state = [PSCustomObject]@{
+        RuntimeDirectory = $values.RuntimeDirectory
+        CreatedDirectory = $createdDirectory
+        LogDirectory = $resolvedLog.Path
+        CreatedLogDirectory = $createdLogDirectory
+        PreviousFiles = $previousFiles
+        Values = $values
+    }
+
+    try {
+        $config = [ordered]@{
+            Version = 2
+            TaskFullPath = $FullTaskPath
+            TaskName = [string]$Data.TaskName
+            Executable = [string]$Data.Program
+            Arguments = [string]$Data.Arguments
+            WorkingDirectory = [string]$Data.WorkingDirectory
+            LogDirectory = $resolvedLog.Path
+            LogDirectoryIsDefault = $resolvedLog.IsDefault
+        }
+        $configJson = $config | ConvertTo-Json -Depth 3
+        [IO.File]::WriteAllText($values.WrapperPath, $script:BackgroundWrapperContent, (New-Object Text.UTF8Encoding($true)))
+        [IO.File]::WriteAllText($values.RunVbsPath, $script:BackgroundVbsContent, [Text.Encoding]::Unicode)
+        [IO.File]::WriteAllText($values.ConfigPath, $configJson, (New-Object Text.UTF8Encoding($true)))
+        Write-AppLog -Message ('已部署后台运行文件：{0}' -f $values.RuntimeDirectory)
+        return $state
+    }
+    catch {
+        Restore-BackgroundRuntimeState $state
+        throw
+    }
+}
+
+function Remove-BackgroundRuntimeFiles {
+    param(
+        [Parameter(Mandatory = $true)][object]$RuntimeInfo,
+        [bool]$DeleteLogs = $false
+    )
+    $runtimeDirectory = [IO.Path]::GetFullPath([string]$RuntimeInfo.RuntimeDirectory)
+    $allowedRuntimeDirectory = $false
+    foreach ($candidate in @(Get-BackgroundActionCandidates $RuntimeInfo.FullTaskPath)) {
+        if ([string]::Equals($runtimeDirectory, [IO.Path]::GetFullPath($candidate.RuntimeDirectory), [StringComparison]::OrdinalIgnoreCase)) {
+            $allowedRuntimeDirectory = $true
+            break
+        }
+    }
+    if (-not $allowedRuntimeDirectory) {
+        throw '拒绝清理：后台运行目录与完整任务路径不匹配。'
+    }
+
+    foreach ($path in @($RuntimeInfo.WrapperPath, $RuntimeInfo.RunVbsPath, $RuntimeInfo.ConfigPath)) {
+        if ([IO.File]::Exists($path)) {
+            [IO.File]::Delete($path)
+        }
+    }
+    if ($DeleteLogs -and [IO.Directory]::Exists($RuntimeInfo.LogDirectory)) {
+        $logDirectory = [IO.Path]::GetFullPath([string]$RuntimeInfo.LogDirectory)
+        $lastDeleteError = $null
+        if ([bool]$RuntimeInfo.LogDirectoryIsDefault) {
+            $expectedLogDirectory = [IO.Path]::GetFullPath((Join-Path $runtimeDirectory 'logs'))
+            if (-not [string]::Equals($logDirectory, $expectedLogDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+                throw '拒绝清理：默认日志目录不在预期的后台运行目录中。'
+            }
+            for ($attempt = 1; $attempt -le 20; $attempt++) {
+                try {
+                    if ([IO.Directory]::Exists($expectedLogDirectory)) {
+                        [IO.Directory]::Delete($expectedLogDirectory, $true)
+                    }
+                    $lastDeleteError = $null
+                    break
+                }
+                catch [IO.IOException] {
+                    $lastDeleteError = $_
+                    Start-Sleep -Milliseconds 250
+                }
+                catch [UnauthorizedAccessException] {
+                    $lastDeleteError = $_
+                    Start-Sleep -Milliseconds 250
+                }
+            }
+        }
+        else {
+            # A custom directory may contain unrelated data. Delete only the
+            # three files owned by this background task, never the whole tree.
+            foreach ($logFileName in @('stdout.log', 'stderr.log', 'wrapper-error.log')) {
+                $logFilePath = Join-Path $logDirectory $logFileName
+                for ($attempt = 1; $attempt -le 20; $attempt++) {
+                    try {
+                        if ([IO.File]::Exists($logFilePath)) { [IO.File]::Delete($logFilePath) }
+                        $lastDeleteError = $null
+                        break
+                    }
+                    catch [IO.IOException] {
+                        $lastDeleteError = $_
+                        Start-Sleep -Milliseconds 250
+                    }
+                    catch [UnauthorizedAccessException] {
+                        $lastDeleteError = $_
+                        Start-Sleep -Milliseconds 250
+                    }
+                }
+                if ($null -ne $lastDeleteError) { break }
+            }
+            if ($null -eq $lastDeleteError -and [IO.Directory]::Exists($logDirectory) -and
+                [IO.Directory]::GetFileSystemEntries($logDirectory).Count -eq 0) {
+                try { [IO.Directory]::Delete($logDirectory, $false) } catch {}
+            }
+        }
+        if ($null -ne $lastDeleteError) {
+            throw ('日志仍被后台进程占用，请停止任务后手动删除：{0}；{1}' -f $logDirectory, $lastDeleteError.Exception.Message)
+        }
+    }
+    if ([IO.Directory]::Exists($runtimeDirectory) -and
+        [IO.Directory]::GetFileSystemEntries($runtimeDirectory).Count -eq 0) {
+        $runtimeDeleteError = $null
+        for ($attempt = 1; $attempt -le 20; $attempt++) {
+            try {
+                if ([IO.Directory]::Exists($runtimeDirectory) -and
+                    [IO.Directory]::GetFileSystemEntries($runtimeDirectory).Count -eq 0) {
+                    [IO.Directory]::Delete($runtimeDirectory, $false)
+                }
+                $runtimeDeleteError = $null
+                break
+            }
+            catch [IO.IOException] {
+                $runtimeDeleteError = $_
+                Start-Sleep -Milliseconds 250
+            }
+            catch [UnauthorizedAccessException] {
+                $runtimeDeleteError = $_
+                Start-Sleep -Milliseconds 250
+            }
+        }
+        if ($null -ne $runtimeDeleteError) {
+            Write-AppLog -Level WARN -Message ('后台文件已清理，但空目录暂时被占用并保留：{0}' -f $runtimeDirectory)
+        }
+    }
+    Write-AppLog -Message ('已清理后台运行脚本；目录={0}；删除日志={1}' -f $runtimeDirectory, $DeleteLogs)
+}
+
 function Get-StateText {
     param([int]$State)
     switch ($State) {
@@ -415,6 +975,34 @@ function Get-ActionSummary {
     return ($summaries -join '；')
 }
 
+function Get-DisplayActionSummary {
+    param(
+        [Parameter(Mandatory = $true)][object]$Definition,
+        [Parameter(Mandatory = $true)][string]$FullTaskPath
+    )
+    $actions = $null
+    $action = $null
+    try {
+        $actions = $Definition.Actions
+        if ([int]$actions.Count -eq 1) {
+            $action = $actions.Item(1)
+            $runtimeInfo = Get-BackgroundRuntimeInfo -FullTaskPath $FullTaskPath -Action $action
+            if ($null -ne $runtimeInfo) {
+                $summary = '后台应用：' + (Quote-SummaryArgument ([string]$runtimeInfo.Config.Executable))
+                if (-not [string]::IsNullOrWhiteSpace([string]$runtimeInfo.Config.Arguments)) {
+                    $summary += ' ' + [string]$runtimeInfo.Config.Arguments
+                }
+                return $summary + '；日志：' + $runtimeInfo.LogDirectory
+            }
+        }
+    }
+    finally {
+        Release-ComObject $action
+        Release-ComObject $actions
+    }
+    return Get-ActionSummary $Definition
+}
+
 function Convert-RegisteredTaskToModel {
     param([object]$RegisteredTask)
     $definition = $null
@@ -433,7 +1021,7 @@ function Convert-RegisteredTaskToModel {
             NextRun = Format-TaskDate $RegisteredTask.NextRunTime
             LastResult = Format-LastResult ([int]$RegisteredTask.LastTaskResult)
             Triggers = Get-TriggerSummary $definition
-            Actions = Get-ActionSummary $definition
+            Actions = Get-DisplayActionSummary -Definition $definition -FullTaskPath ([string]$RegisteredTask.Path)
             Description = $description
         }
     }
@@ -719,6 +1307,48 @@ function Get-RegisteredTaskXml {
     }
 }
 
+function Get-RegisteredTaskBackgroundInfo {
+    param([Parameter(Mandatory = $true)][string]$FullPath)
+    Connect-TaskService
+    $parts = Split-RegisteredTaskPath $FullPath
+    $folder = $null
+    $task = $null
+    $definition = $null
+    $actions = $null
+    $action = $null
+    try {
+        $folder = $script:TaskService.GetFolder($parts.Folder)
+        $task = $folder.GetTask($parts.Name)
+        $definition = $task.Definition
+        $actions = $definition.Actions
+        if ([int]$actions.Count -ne 1) { return $null }
+        $action = $actions.Item(1)
+        return Get-BackgroundRuntimeInfo -FullTaskPath $FullPath -Action $action
+    }
+    finally {
+        Release-ComObject $action
+        Release-ComObject $actions
+        Release-ComObject $definition
+        Release-ComObject $task
+        Release-ComObject $folder
+    }
+}
+
+function Open-DirectoryInExplorer {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if (-not [IO.Directory]::Exists($fullPath)) {
+        [void][IO.Directory]::CreateDirectory($fullPath)
+    }
+    $explorerPath = Join-Path $env:SystemRoot 'explorer.exe'
+    $startInfo = New-Object Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $explorerPath
+    $startInfo.Arguments = '"{0}"' -f $fullPath.Replace('"', '""')
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    [void][Diagnostics.Process]::Start($startInfo)
+}
+
 function Show-XmlWindow {
     param(
         [string]$TaskPath,
@@ -774,6 +1404,7 @@ function Get-TaskEditData {
     $principal = $null
     $action = $null
     $trigger = $null
+    $backgroundInfo = $null
     try {
         $folder = $script:TaskService.GetFolder($parts.Folder)
         $task = $folder.GetTask($parts.Name)
@@ -869,6 +1500,13 @@ function Get-TaskEditData {
             }
         }
 
+        if ($null -ne $action) {
+            $backgroundInfo = Get-BackgroundRuntimeInfo -FullTaskPath $FullPath -Action $action
+            if ($null -eq $backgroundInfo -and (Test-ActionTargetsBackgroundRunner -FullTaskPath $FullPath -Action $action)) {
+                $reasons.Add('后台运行配置缺失或与任务路径不匹配')
+            }
+        }
+
         if ($reasons.Count -gt 0) {
             return [PSCustomObject]@{
                 Supported = $false
@@ -900,6 +1538,21 @@ function Get-TaskEditData {
         }
         catch {}
 
+        $displayProgram = [string]$action.Path
+        $displayArguments = [string]$action.Arguments
+        $displayWorkingDirectory = [string]$action.WorkingDirectory
+        $backgroundMode = $false
+        $displayLogDirectory = ''
+        if ($null -ne $backgroundInfo) {
+            $displayProgram = [string]$backgroundInfo.Config.Executable
+            $displayArguments = [string]$backgroundInfo.Config.Arguments
+            $displayWorkingDirectory = [string]$backgroundInfo.Config.WorkingDirectory
+            $backgroundMode = $true
+            if (-not [bool]$backgroundInfo.LogDirectoryIsDefault) {
+                $displayLogDirectory = [string]$backgroundInfo.LogDirectory
+            }
+        }
+
         return [PSCustomObject]@{
             Supported = $true
             FullPath = $FullPath
@@ -907,9 +1560,11 @@ function Get-TaskEditData {
             TaskName = $parts.Name
             Description = [string]$definition.RegistrationInfo.Description
             Enabled = [bool]$task.Enabled
-            Program = [string]$action.Path
-            Arguments = [string]$action.Arguments
-            WorkingDirectory = [string]$action.WorkingDirectory
+            Program = $displayProgram
+            Arguments = $displayArguments
+            WorkingDirectory = $displayWorkingDirectory
+            BackgroundMode = $backgroundMode
+            LogDirectory = $displayLogDirectory
             TriggerKind = $triggerKind
             StartDate = $start.Date
             StartTime = $start.ToString('HH:mm')
@@ -1000,13 +1655,35 @@ function Register-TaskFromData {
     $registeredTask = $null
     $sourceFolder = $null
     $sourceTask = $null
+    $sourceActionsForRuntime = $null
+    $sourceActionForRuntime = $null
+    $oldRuntimeInfo = $null
+    $backgroundInstallState = $null
+    $registrationSucceeded = $false
     try {
+        $backgroundMode = $false
+        if ($null -ne $Data.PSObject.Properties['BackgroundMode']) {
+            $backgroundMode = [bool]$Data.BackgroundMode
+        }
         $folder = Ensure-TaskFolder $Data.TaskPath
         if (-not [string]::IsNullOrWhiteSpace($OriginalFullPath)) {
             $sourceParts = Split-RegisteredTaskPath $OriginalFullPath
             $sourceFolder = $script:TaskService.GetFolder($sourceParts.Folder)
             $sourceTask = $sourceFolder.GetTask($sourceParts.Name)
             $definition = $sourceTask.Definition
+            try {
+                $sourceActionsForRuntime = $definition.Actions
+                if ([int]$sourceActionsForRuntime.Count -eq 1) {
+                    $sourceActionForRuntime = $sourceActionsForRuntime.Item(1)
+                    $oldRuntimeInfo = Get-BackgroundRuntimeInfo -FullTaskPath $OriginalFullPath -Action $sourceActionForRuntime
+                }
+            }
+            finally {
+                Release-ComObject $sourceActionForRuntime
+                $sourceActionForRuntime = $null
+                Release-ComObject $sourceActionsForRuntime
+                $sourceActionsForRuntime = $null
+            }
         }
         else {
             $definition = $script:TaskService.NewTask(0)
@@ -1028,7 +1705,14 @@ function Register-TaskFromData {
         $settings.StartWhenAvailable = $true
         $settings.DisallowStartIfOnBatteries = $false
         $settings.StopIfGoingOnBatteries = $false
-        $settings.ExecutionTimeLimit = 'PT72H'
+        $settings.ExecutionTimeLimit = if ($backgroundMode) { 'PT0S' } else { 'PT72H' }
+        if ($backgroundMode) {
+            # TASK_INSTANCES_IGNORE_NEW prevents duplicate long-running services.
+            $settings.MultipleInstances = 2
+        }
+        elseif ($null -ne $oldRuntimeInfo) {
+            $settings.MultipleInstances = 0
+        }
 
         $triggers = $definition.Triggers
         $triggers.Clear()
@@ -1056,12 +1740,23 @@ function Register-TaskFromData {
             $repetition.StopAtDurationEnd = $false
         }
 
+        $fullPath = Join-TaskFullPath $Data.TaskPath $Data.TaskName
+        $effectiveProgram = [string]$Data.Program
+        $effectiveArguments = [string]$Data.Arguments
+        $effectiveWorkingDirectory = [string]$Data.WorkingDirectory
+        if ($backgroundMode) {
+            $backgroundInstallState = Install-BackgroundRuntime -Data $Data -FullTaskPath $fullPath -OriginalFullPath $OriginalFullPath
+            $effectiveProgram = $backgroundInstallState.Values.WscriptPath
+            $effectiveArguments = $backgroundInstallState.Values.ActionArguments
+            $effectiveWorkingDirectory = $backgroundInstallState.Values.RuntimeDirectory
+        }
+
         $actions = $definition.Actions
         $actions.Clear()
         $action = $actions.Create($script:TASK_ACTION_EXEC)
-        $action.Path = $Data.Program
-        $action.Arguments = $Data.Arguments
-        $action.WorkingDirectory = $Data.WorkingDirectory
+        $action.Path = $effectiveProgram
+        $action.Arguments = $effectiveArguments
+        $action.WorkingDirectory = $effectiveWorkingDirectory
 
         $flags = $script:TASK_CREATE
         if ($Data.Overwrite) {
@@ -1076,8 +1771,8 @@ function Register-TaskFromData {
             $script:TASK_LOGON_INTERACTIVE_TOKEN,
             $null
         )
+        $registrationSucceeded = $true
 
-        $fullPath = Join-TaskFullPath $Data.TaskPath $Data.TaskName
         Write-AppLog -Message ('已注册任务 {0}；InteractiveToken；LeastPrivilege' -f $fullPath)
 
         if (-not [string]::IsNullOrWhiteSpace($OriginalFullPath) -and $OriginalFullPath -ne $fullPath) {
@@ -1097,7 +1792,26 @@ function Register-TaskFromData {
                 Release-ComObject $oldFolder
             }
         }
+
+        if ($null -ne $oldRuntimeInfo) {
+            $newRuntimeDirectory = if ($backgroundMode) { [string]$backgroundInstallState.Values.RuntimeDirectory } else { $null }
+            if (-not $backgroundMode -or
+                -not [string]::Equals([string]$oldRuntimeInfo.RuntimeDirectory, $newRuntimeDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+                try {
+                    Remove-BackgroundRuntimeFiles -RuntimeInfo $oldRuntimeInfo -DeleteLogs $false
+                }
+                catch {
+                    Write-AppLog -Level WARN -Message ('旧后台运行脚本清理失败 {0}：{1}' -f $OriginalFullPath, $_.Exception.Message)
+                }
+            }
+        }
         return $fullPath
+    }
+    catch {
+        if (-not $registrationSucceeded -and $null -ne $backgroundInstallState) {
+            Restore-BackgroundRuntimeState $backgroundInstallState
+        }
+        throw
     }
     finally {
         Release-ComObject $registeredTask
@@ -1112,6 +1826,8 @@ function Register-TaskFromData {
         Release-ComObject $definition
         Release-ComObject $sourceTask
         Release-ComObject $sourceFolder
+        Release-ComObject $sourceActionForRuntime
+        Release-ComObject $sourceActionsForRuntime
         Release-ComObject $folder
     }
 }
@@ -1155,7 +1871,7 @@ function Show-TaskEditor {
     [xml]$editorXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="任务" Width="700" Height="650" MinWidth="620" MinHeight="600"
+        Title="任务" Width="760" Height="760" MinWidth="680" MinHeight="680"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
   <Grid Margin="16">
     <Grid.RowDefinitions>
@@ -1169,6 +1885,8 @@ function Show-TaskEditor {
           <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
@@ -1199,19 +1917,34 @@ function Show-TaskEditor {
         <TextBox x:Name="ArgumentsBox" Grid.Row="7" Grid.Column="1" Margin="4"/>
         <Label Grid.Row="8" Grid.Column="0" Content="工作目录"/>
         <TextBox x:Name="WorkingDirectoryBox" Grid.Row="8" Grid.Column="1" Margin="4"/>
-        <Separator Grid.Row="9" Grid.ColumnSpan="2" Margin="0,10"/>
-        <Label Grid.Row="10" Grid.Column="0" Content="触发器"/>
-        <ComboBox x:Name="TriggerKindBox" Grid.Row="10" Grid.Column="1" Margin="4" SelectedIndex="0">
+        <Label Grid.Row="9" Grid.Column="0" Content="运行方式"/>
+        <CheckBox x:Name="BackgroundBox" Grid.Row="9" Grid.Column="1" Margin="8,7"
+                  Content="后台应用（无控制台窗口，记录 stdout/stderr）"/>
+        <TextBlock Grid.Row="10" Grid.Column="1" Margin="8,0,4,5" Foreground="#666666" TextWrapping="Wrap"
+                   Text="运行文件按完整任务路径的 SHA-256 隔离，位于 %LOCALAPPDATA%\UserTaskManager\Tasks\&lt;hash&gt;\。"/>
+        <Label Grid.Row="11" Grid.Column="0" Content="日志目录（可选）"/>
+        <Grid Grid.Row="11" Grid.Column="1">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBox x:Name="LogDirectoryBox" Margin="4" ToolTip="仅用于后台应用；留空使用任务专属默认目录"
+                   IsEnabled="{Binding IsChecked, ElementName=BackgroundBox}"/>
+          <Button x:Name="BrowseLogDirectoryButton" Grid.Column="1" Width="75" Margin="4" Content="浏览..."
+                  IsEnabled="{Binding IsChecked, ElementName=BackgroundBox}"/>
+        </Grid>
+        <TextBlock Grid.Row="12" Grid.Column="1" Margin="8,0,4,5" Foreground="#666666" TextWrapping="Wrap"
+                   Text="仅用于后台应用。留空时日志保存在上述任务专属目录的 logs 子目录。"/>
+        <Separator Grid.Row="13" Grid.ColumnSpan="2" Margin="0,10"/>
+        <Label Grid.Row="14" Grid.Column="0" Content="触发器"/>
+        <ComboBox x:Name="TriggerKindBox" Grid.Row="14" Grid.Column="1" Margin="4" SelectedIndex="0">
           <ComboBoxItem Content="登录时"/><ComboBoxItem Content="单次"/><ComboBoxItem Content="每天"/>
         </ComboBox>
-        <Label Grid.Row="11" Grid.Column="0" Content="开始日期和时间"/>
-        <StackPanel Grid.Row="11" Grid.Column="1" Orientation="Horizontal">
+        <Label Grid.Row="15" Grid.Column="0" Content="开始日期和时间"/>
+        <StackPanel Grid.Row="15" Grid.Column="1" Orientation="Horizontal">
           <DatePicker x:Name="StartDatePicker" Width="180" Margin="4"/>
           <TextBox x:Name="StartTimeBox" Width="90" Margin="4" ToolTip="HH:mm"/>
           <TextBlock Margin="4,7" Text="（登录触发器忽略此项）"/>
         </StackPanel>
-        <Label Grid.Row="12" Grid.Column="0" Content="重复间隔（分钟）"/>
-        <StackPanel Grid.Row="12" Grid.Column="1" Orientation="Horizontal">
+        <Label Grid.Row="16" Grid.Column="0" Content="重复间隔（分钟）"/>
+        <StackPanel Grid.Row="16" Grid.Column="1" Orientation="Horizontal">
           <TextBox x:Name="RepeatMinutesBox" Width="90" Margin="4" Text="0"/>
           <TextBlock Margin="4,7" Text="0 表示不重复；登录触发器不支持重复"/>
         </StackPanel>
@@ -1236,11 +1969,14 @@ function Show-TaskEditor {
     $programBox = $window.FindName('ProgramBox')
     $argumentsBox = $window.FindName('ArgumentsBox')
     $workingDirectoryBox = $window.FindName('WorkingDirectoryBox')
+    $backgroundBox = $window.FindName('BackgroundBox')
+    $logDirectoryBox = $window.FindName('LogDirectoryBox')
     $triggerKindBox = $window.FindName('TriggerKindBox')
     $startDatePicker = $window.FindName('StartDatePicker')
     $startTimeBox = $window.FindName('StartTimeBox')
     $repeatMinutesBox = $window.FindName('RepeatMinutesBox')
     $browseButton = $window.FindName('BrowseButton')
+    $browseLogDirectoryButton = $window.FindName('BrowseLogDirectoryButton')
     $saveButton = $window.FindName('SaveButton')
     $cancelButton = $window.FindName('CancelButton')
 
@@ -1256,6 +1992,10 @@ function Show-TaskEditor {
         $programBox.Text = $ExistingData.Program
         $argumentsBox.Text = $ExistingData.Arguments
         $workingDirectoryBox.Text = $ExistingData.WorkingDirectory
+        $backgroundBox.IsChecked = [bool]$ExistingData.BackgroundMode
+        if ($null -ne $ExistingData.PSObject.Properties['LogDirectory']) {
+            $logDirectoryBox.Text = [string]$ExistingData.LogDirectory
+        }
         foreach ($item in $triggerKindBox.Items) {
             if ([string]$item.Content -eq $ExistingData.TriggerKind) {
                 $triggerKindBox.SelectedItem = $item
@@ -1334,6 +2074,10 @@ function Show-TaskEditor {
             $normalizedPath = Normalize-FolderPath $taskPathBox.Text
             $name = $taskNameBox.Text
             $fullPath = Join-TaskFullPath $normalizedPath $name
+            if ([bool]$backgroundBox.IsChecked) {
+                $runtimeValues = Get-BackgroundActionValues $fullPath
+                [void](Resolve-BackgroundLogDirectory -RequestedPath $logDirectoryBox.Text -DefaultPath $runtimeValues.DefaultLogDirectory)
+            }
             $originalPath = if ($Mode -eq 'Edit') { [string]$ExistingData.FullPath } else { $null }
             $isSameTask = $Mode -eq 'Edit' -and $originalPath -eq $fullPath
             $exists = $false
@@ -1387,6 +2131,8 @@ function Show-TaskEditor {
                 Program = [string]$programBox.Text
                 Arguments = [string]$argumentsBox.Text
                 WorkingDirectory = [string]$workingDirectoryBox.Text
+                BackgroundMode = [bool]$backgroundBox.IsChecked
+                LogDirectory = [string]$logDirectoryBox.Text
                 TriggerKind = $kind
                 StartDateTime = $startDateTime
                 RepeatMinutes = $repeatMinutes
@@ -1409,6 +2155,66 @@ function Show-TaskEditor {
         return $window.Tag
     }
     return $null
+}
+
+function Show-DeleteTaskDialog {
+    param([Parameter(Mandatory = $true)][string]$FullTaskPath)
+    [xml]$deleteXaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="二次确认删除任务" Width="570" Height="285" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner">
+  <Grid Margin="18">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
+    <TextBlock Grid.Row="0" FontWeight="SemiBold" FontSize="15" Text="即将删除现有任务："/>
+    <TextBox x:Name="PathText" Grid.Row="1" Margin="0,10,0,10" IsReadOnly="True"
+             TextWrapping="Wrap" BorderThickness="1" Padding="7"/>
+    <TextBlock Grid.Row="2" Foreground="#A00000" TextWrapping="Wrap"
+               Text="任务删除后无法由本程序恢复。若这是后台应用，wrapper.ps1、run.vbs 和 config.json 会一并删除。"/>
+    <CheckBox x:Name="DeleteLogsBox" Grid.Row="3" Margin="0,14,0,0" VerticalAlignment="Top"
+              Content="同时删除该后台任务生成的日志文件（自定义目录中的其他文件不会删除）"/>
+    <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+      <Button x:Name="DeleteButton" Width="100" Margin="4" IsDefault="True" Content="确认删除"/>
+      <Button x:Name="CancelButton" Width="100" Margin="4" IsCancel="True" Content="取消"/>
+    </StackPanel>
+  </Grid>
+</Window>
+'@
+    $reader = New-Object Xml.XmlNodeReader $deleteXaml
+    $window = [Windows.Markup.XamlReader]::Load($reader)
+    $window.Owner = $script:MainWindow
+    $window.FindName('PathText').Text = $FullTaskPath
+    $deleteLogsBox = $window.FindName('DeleteLogsBox')
+    $window.FindName('DeleteButton').Add_Click({
+        $window.Tag = [bool]$deleteLogsBox.IsChecked
+        $window.DialogResult = $true
+    })
+
+    $browseLogDirectoryButton.Add_Click({
+        $dialog = New-Object Windows.Forms.FolderBrowserDialog
+        $dialog.Description = '选择后台应用日志目录'
+        $dialog.ShowNewFolderButton = $true
+        try {
+            $candidate = [Environment]::ExpandEnvironmentVariables($logDirectoryBox.Text.Trim())
+            if (-not [string]::IsNullOrWhiteSpace($candidate) -and [IO.Directory]::Exists($candidate)) {
+                $dialog.SelectedPath = [IO.Path]::GetFullPath($candidate)
+            }
+            if ($dialog.ShowDialog() -eq [Windows.Forms.DialogResult]::OK) {
+                $logDirectoryBox.Text = $dialog.SelectedPath
+            }
+        }
+        finally {
+            $dialog.Dispose()
+        }
+    })
+    $window.FindName('CancelButton').Add_Click({ $window.DialogResult = $false })
+    if ($window.ShowDialog()) {
+        return [PSCustomObject]@{ Confirmed = $true; DeleteLogs = [bool]$window.Tag }
+    }
+    return [PSCustomObject]@{ Confirmed = $false; DeleteLogs = $false }
 }
 
 [xml]$mainXaml = @'
@@ -1434,6 +2240,7 @@ function Show-TaskEditor {
           <Separator/>
           <Button x:Name="ViewXmlButton" Padding="12,5" Content="查看 XML"/>
           <Button x:Name="ExportXmlButton" Padding="12,5" Content="导出 XML"/>
+          <Button x:Name="OpenLogButton" Padding="12,5" Content="打开任务日志"/>
         </ToolBar>
       </ToolBarTray>
     </Border>
@@ -1547,19 +2354,39 @@ $script:MainWindow.FindName('DeleteButton').Add_Click({
         Show-InfoMessage '请先选择一个任务。'
         return
     }
-    $answer = [Windows.MessageBox]::Show(
-        $script:MainWindow,
-        "即将删除现有任务：`n`n完整 TaskPath + TaskName：$($selected.Path)`n`n删除后无法由本程序恢复。确认删除吗？",
-        '二次确认删除任务',
-        [Windows.MessageBoxButton]::YesNo,
-        [Windows.MessageBoxImage]::Warning,
-        [Windows.MessageBoxResult]::No
-    )
-    if ($answer -ne [Windows.MessageBoxResult]::Yes) { return }
+    $deleteOptions = Show-DeleteTaskDialog -FullTaskPath $selected.Path
+    if (-not $deleteOptions.Confirmed) { return }
     Invoke-WithSelectedTask -OperationName '删除' -Operation {
         param($folder, $task, $model)
+        $definition = $null
+        $actions = $null
+        $taskAction = $null
+        $runtimeInfo = $null
+        try {
+            $definition = $task.Definition
+            $actions = $definition.Actions
+            if ([int]$actions.Count -eq 1) {
+                $taskAction = $actions.Item(1)
+                $runtimeInfo = Get-BackgroundRuntimeInfo -FullTaskPath $model.Path -Action $taskAction
+            }
+        }
+        finally {
+            Release-ComObject $taskAction
+            Release-ComObject $actions
+            Release-ComObject $definition
+        }
         $parts = Split-RegisteredTaskPath $model.Path
         $folder.DeleteTask($parts.Name, 0)
+        if ($null -ne $runtimeInfo) {
+            try {
+                Remove-BackgroundRuntimeFiles -RuntimeInfo $runtimeInfo -DeleteLogs ([bool]$deleteOptions.DeleteLogs)
+            }
+            catch {
+                $cleanupMessage = '任务已删除，但后台运行文件清理失败：{0}' -f $_.Exception.Message
+                Write-AppLog -Level WARN -Message $cleanupMessage
+                Show-InfoMessage $cleanupMessage
+            }
+        }
     }
 })
 
@@ -1576,6 +2403,34 @@ $script:MainWindow.FindName('ViewXmlButton').Add_Click({
     }
     catch {
         Show-ErrorMessage (Get-FriendlyError -ErrorRecord $_ -Context ('查看 XML {0}' -f $selected.Path))
+    }
+})
+
+$script:MainWindow.FindName('OpenLogButton').Add_Click({
+    if ($script:IsBusy) { return }
+    $selected = $script:TaskGrid.SelectedItem
+    if ($null -eq $selected) {
+        Show-InfoMessage '请先选择一个后台应用任务。'
+        return
+    }
+    Set-Busy -Busy $true -Status ('正在读取日志目录：{0}' -f $selected.Path)
+    try {
+        $runtimeInfo = Get-RegisteredTaskBackgroundInfo -FullPath $selected.Path
+        if ($null -eq $runtimeInfo) {
+            throw '所选任务不是由本程序配置的后台应用，或其后台配置文件缺失，无法确定日志目录。'
+        }
+        Open-DirectoryInExplorer -Path $runtimeInfo.LogDirectory
+        $message = '已打开任务日志目录：{0}' -f $runtimeInfo.LogDirectory
+        Write-AppLog -Message $message
+        Set-Status -Text $message
+    }
+    catch {
+        $message = Get-FriendlyError -ErrorRecord $_ -Context ('打开任务日志 {0}' -f $selected.Path)
+        Show-ErrorMessage $message
+        Set-Status -Text $message
+    }
+    finally {
+        Set-Busy -Busy $false
     }
 })
 
