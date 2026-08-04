@@ -45,6 +45,13 @@ $script:AppName = 'UserTaskManager'
 $script:TaskService = $null
 $script:MainWindow = $null
 $script:IsBusy = $false
+$script:TaskContextMenu = $null
+$script:TaskContextRunItem = $null
+$script:TaskContextStopItem = $null
+$script:TaskContextDisableItem = $null
+$script:TaskContextEnableItem = $null
+$script:TaskContextExportItem = $null
+$script:TaskContextDeleteItem = $null
 $script:FolderPaths = New-Object 'System.Collections.Generic.List[string]'
 $script:CurrentFolderPath = '\'
 $script:CurrentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -754,6 +761,32 @@ function New-BackgroundActionValues {
         ActionPath = $actionPath
         ActionArguments = $actionArguments
     }
+}
+
+function Update-TaskContextMenu {
+    param([AllowNull()][object]$TaskModel = $script:TaskGrid.SelectedItem)
+
+    $hasTask = $null -ne $TaskModel
+    $isEnabled = $hasTask -and [bool]$TaskModel.Enabled
+    $visible = [Windows.Visibility]::Visible
+    $collapsed = [Windows.Visibility]::Collapsed
+
+    $script:TaskContextRunItem.Visibility = if ($isEnabled) { $visible } else { $collapsed }
+    $script:TaskContextStopItem.Visibility = if ($isEnabled) { $visible } else { $collapsed }
+    $script:TaskContextDisableItem.Visibility = if ($isEnabled) { $visible } else { $collapsed }
+    $script:TaskContextEnableItem.Visibility = if ($hasTask -and -not $isEnabled) { $visible } else { $collapsed }
+    $script:TaskContextExportItem.Visibility = if ($hasTask) { $visible } else { $collapsed }
+    $script:TaskContextDeleteItem.Visibility = if ($hasTask) { $visible } else { $collapsed }
+}
+
+function Invoke-MainToolbarAction {
+    param([Parameter(Mandatory = $true)][string]$ButtonName)
+
+    if ($script:IsBusy) { return }
+    $button = $script:MainWindow.FindName($ButtonName)
+    if ($null -eq $button -or -not $button.IsEnabled) { return }
+    $clickEvent = New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)
+    $button.RaiseEvent($clickEvent)
 }
 
 function Get-BackgroundActionValues {
@@ -2590,6 +2623,67 @@ $script:StatusText = $script:MainWindow.FindName('StatusText')
 $script:CountText = $script:MainWindow.FindName('CountText')
 $script:RefreshButton = $script:MainWindow.FindName('RefreshButton')
 $script:ActionPanel = $script:MainWindow.FindName('CreateButton').Parent
+
+$script:TaskContextMenu = New-Object Windows.Controls.ContextMenu
+$script:TaskContextRunItem = New-Object Windows.Controls.MenuItem
+$script:TaskContextRunItem.Header = '运行'
+$script:TaskContextStopItem = New-Object Windows.Controls.MenuItem
+$script:TaskContextStopItem.Header = '结束'
+$script:TaskContextDisableItem = New-Object Windows.Controls.MenuItem
+$script:TaskContextDisableItem.Header = '禁用'
+$script:TaskContextEnableItem = New-Object Windows.Controls.MenuItem
+$script:TaskContextEnableItem.Header = '启用'
+$taskContextSeparator = New-Object Windows.Controls.Separator
+$script:TaskContextExportItem = New-Object Windows.Controls.MenuItem
+$script:TaskContextExportItem.Header = '导出'
+$script:TaskContextDeleteItem = New-Object Windows.Controls.MenuItem
+$script:TaskContextDeleteItem.Header = '删除'
+
+[void]$script:TaskContextMenu.Items.Add($script:TaskContextRunItem)
+[void]$script:TaskContextMenu.Items.Add($script:TaskContextStopItem)
+[void]$script:TaskContextMenu.Items.Add($script:TaskContextDisableItem)
+[void]$script:TaskContextMenu.Items.Add($script:TaskContextEnableItem)
+[void]$script:TaskContextMenu.Items.Add($taskContextSeparator)
+[void]$script:TaskContextMenu.Items.Add($script:TaskContextExportItem)
+[void]$script:TaskContextMenu.Items.Add($script:TaskContextDeleteItem)
+$script:TaskGrid.ContextMenu = $script:TaskContextMenu
+
+$script:TaskContextRunItem.Add_Click({ Invoke-MainToolbarAction -ButtonName 'RunButton' })
+$script:TaskContextStopItem.Add_Click({ Invoke-MainToolbarAction -ButtonName 'StopButton' })
+$script:TaskContextDisableItem.Add_Click({ Invoke-MainToolbarAction -ButtonName 'DisableButton' })
+$script:TaskContextEnableItem.Add_Click({ Invoke-MainToolbarAction -ButtonName 'EnableButton' })
+$script:TaskContextExportItem.Add_Click({ Invoke-MainToolbarAction -ButtonName 'ExportXmlButton' })
+$script:TaskContextDeleteItem.Add_Click({ Invoke-MainToolbarAction -ButtonName 'DeleteButton' })
+
+$script:TaskGrid.Add_PreviewMouseRightButtonDown({
+    param($sender, $eventArgs)
+
+    $element = $eventArgs.OriginalSource
+    while ($null -ne $element -and -not ($element -is [Windows.Controls.DataGridRow])) {
+        if (-not ($element -is [Windows.DependencyObject])) {
+            $element = $null
+            break
+        }
+        $element = [Windows.Media.VisualTreeHelper]::GetParent($element)
+    }
+    if ($element -is [Windows.Controls.DataGridRow]) {
+        $script:TaskGrid.SelectedItem = $element.Item
+        $element.IsSelected = $true
+        [void]$element.Focus()
+    }
+    else {
+        $script:TaskGrid.SelectedItem = $null
+    }
+})
+$script:TaskGrid.Add_ContextMenuOpening({
+    param($sender, $eventArgs)
+
+    if ($script:IsBusy -or $null -eq $script:TaskGrid.SelectedItem) {
+        $eventArgs.Handled = $true
+        return
+    }
+    Update-TaskContextMenu -TaskModel $script:TaskGrid.SelectedItem
+})
 
 $script:RefreshButton.Add_Click({ Refresh-All })
 $script:TaskGrid.Add_SelectionChanged({ Update-TaskDetails })

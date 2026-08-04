@@ -322,6 +322,28 @@ try {
         Assert-True ($null -ne $taskEditorAst -and
             $taskEditorAst.Extent.Text -match 'browseLogDirectoryButton\.Add_Click') '日志目录浏览事件绑定在任务编辑器中'
 
+        $enabledMenuModel = [PSCustomObject]@{ Enabled = $true }
+        Update-TaskContextMenu -TaskModel $enabledMenuModel
+        Assert-True (
+            $script:TaskContextRunItem.Visibility -eq [Windows.Visibility]::Visible -and
+            $script:TaskContextStopItem.Visibility -eq [Windows.Visibility]::Visible -and
+            $script:TaskContextDisableItem.Visibility -eq [Windows.Visibility]::Visible -and
+            $script:TaskContextEnableItem.Visibility -eq [Windows.Visibility]::Collapsed -and
+            $script:TaskContextExportItem.Visibility -eq [Windows.Visibility]::Visible -and
+            $script:TaskContextDeleteItem.Visibility -eq [Windows.Visibility]::Visible
+        ) '启用任务的右键菜单显示运行、结束、禁用、导出和删除'
+
+        $disabledMenuModel = [PSCustomObject]@{ Enabled = $false }
+        Update-TaskContextMenu -TaskModel $disabledMenuModel
+        Assert-True (
+            $script:TaskContextRunItem.Visibility -eq [Windows.Visibility]::Collapsed -and
+            $script:TaskContextStopItem.Visibility -eq [Windows.Visibility]::Collapsed -and
+            $script:TaskContextDisableItem.Visibility -eq [Windows.Visibility]::Collapsed -and
+            $script:TaskContextEnableItem.Visibility -eq [Windows.Visibility]::Visible -and
+            $script:TaskContextExportItem.Visibility -eq [Windows.Visibility]::Visible -and
+            $script:TaskContextDeleteItem.Visibility -eq [Windows.Visibility]::Visible
+        ) '禁用任务的右键菜单仅显示启用、导出和删除'
+
         $sameLeafA = Get-BackgroundRuntimeDirectory ('\FolderA\' + $backgroundName)
         $sameLeafB = Get-BackgroundRuntimeDirectory ('\FolderB\' + $backgroundName)
         Assert-True (-not [string]::Equals($sameLeafA, $sameLeafB, [StringComparison]::OrdinalIgnoreCase)) '不同文件夹中的同名任务使用不同后台运行目录'
