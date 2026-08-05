@@ -313,8 +313,10 @@ $sourceText = $sourceText.Replace($iconMarker, $iconBase64)
 $header = @'
 <# :
   @echo off
-  "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" /nologo /noprofile -STA -WindowStyle Hidden /command ^
-    "&{try{& ([ScriptBlock]::Create((Get-Content """%~f0""" -Encoding UTF8) -join [Char[]]10)) %*}catch{Write-Error $_;exit 1}}"
+  set "_WS=-WindowStyle Hidden"
+  if not "%*"=="" set "_WS="
+  "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" /nologo /noprofile -STA %_WS% /command ^
+    "&{try{& ([ScriptBlock]::Create((Get-Content """%~f0""" -Encoding UTF8) -join [Char[]]10)) @args}catch{Write-Error $_;exit 1}}" %*
   exit /b %errorlevel%
 #>
 
