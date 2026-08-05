@@ -95,6 +95,8 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Collections;
+using System.Collections.Generic;
 
 namespace UserTaskManager
 {
@@ -303,12 +305,44 @@ namespace UserTaskManager
             }
         }
 
+        static string BuildEnvironmentBlock(string[] extras)
+        {
+            var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+            {
+                env[(string)entry.Key] = (string)entry.Value;
+            }
+            if (extras != null)
+            {
+                foreach (string extra in extras)
+                {
+                    if (string.IsNullOrEmpty(extra)) continue;
+                    int eq = extra.IndexOf('=');
+                    if (eq <= 0) continue;
+                    string key = extra.Substring(0, eq);
+                    string value = extra.Substring(eq + 1);
+                    env[key] = value;
+                }
+            }
+            var sb = new StringBuilder();
+            foreach (var kvp in env)
+            {
+                sb.Append(kvp.Key);
+                sb.Append('=');
+                sb.Append(kvp.Value);
+                sb.Append('\0');
+            }
+            sb.Append('\0');
+            return sb.ToString();
+        }
+
         public static int Run(
             string executable,
             string arguments,
             string workingDirectory,
             string stdoutPath,
-            string stderrPath)
+            string stderrPath,
+            string[] extraEnvironment)
         {
             if (String.IsNullOrWhiteSpace(executable))
                 throw new ArgumentException("Executable is empty.", "executable");
@@ -369,18 +403,27 @@ namespace UserTaskManager
                     ? null
                     : workingDirectory;
 
-                if (!CreateProcess(
-                    executable,
-                    commandLine,
-                    IntPtr.Zero,
-                    IntPtr.Zero,
-                    true,
-                    CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
-                    IntPtr.Zero,
-                    currentDirectory,
-                    ref startup,
-                    out process))
-                    ThrowLastWin32Error("CreateProcess");
+                string envBlock = BuildEnvironmentBlock(extraEnvironment);
+                IntPtr envPtr = Marshal.StringToHGlobalUni(envBlock);
+                try
+                {
+                    if (!CreateProcess(
+                        executable,
+                        commandLine,
+                        IntPtr.Zero,
+                        IntPtr.Zero,
+                        true,
+                        CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+                        envPtr,
+                        currentDirectory,
+                        ref startup,
+                        out process))
+                        ThrowLastWin32Error("CreateProcess");
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(envPtr);
+                }
                 processCreated = true;
 
                 SetHandleInformation(stdoutHandle, HANDLE_FLAG_INHERIT, 0);
@@ -453,6 +496,13 @@ try {
         throw 'Executable is empty in config.json.'
     }
 
+    $extraEnv = @()
+    if ($null -ne $config.PSObject.Properties['Environment']) {
+        foreach ($prop in $config.Environment.PSObject.Properties) {
+            $extraEnv += "$($prop.Name)=$($prop.Value)"
+        }
+    }
+
     # The executable and raw Windows argument string are passed directly to
     # CreateProcessW. No PowerShell or cmd.exe reparsing is introduced.
     $exitCode = [UserTaskManager.BackgroundProcessRunner]::Run(
@@ -460,7 +510,8 @@ try {
         [string]$config.Arguments,
         [string]$config.WorkingDirectory,
         (Join-Path $logDirectory 'stdout.log'),
-        (Join-Path $logDirectory 'stderr.log')
+        (Join-Path $logDirectory 'stderr.log'),
+        $extraEnv
     )
 }
 catch {
@@ -898,6 +949,7 @@ function Get-BackgroundRuntimeInfo {
                 ActionPath = $values.ActionPath
                 ActionArguments = $values.ActionArguments
                 Config = $config
+                Environment = if ($null -ne $config.PSObject.Properties['Environment']) { $config.Environment } else { $null }
             }
         }
         return $null
@@ -1012,6 +1064,12 @@ function Install-BackgroundRuntime {
     }
 
     try {
+        $envObject = @{}
+        if ($null -ne $Data.PSObject.Properties['Environment'] -and $null -ne $Data.Environment) {
+            foreach ($key in $Data.Environment.Keys) {
+                $envObject[$key] = [string]$Data.Environment[$key]
+            }
+        }
         $config = [ordered]@{
             Version = 1
             TaskFullPath = $FullTaskPath
@@ -1021,6 +1079,7 @@ function Install-BackgroundRuntime {
             WorkingDirectory = [string]$Data.WorkingDirectory
             LogDirectory = $resolvedLog.Path
             LogDirectoryIsDefault = $resolvedLog.IsDefault
+            Environment = $envObject
         }
         $configJson = $config | ConvertTo-Json -Depth 3
         [IO.File]::WriteAllText($values.WrapperPath, $script:BackgroundWrapperContent, (New-Object Text.UTF8Encoding($true)))
@@ -1838,6 +1897,7 @@ function Get-TaskEditData {
         $displayWorkingDirectory = [string]$action.WorkingDirectory
         $backgroundMode = $false
         $displayLogDirectory = ''
+        $displayEnvironment = $null
         if ($null -ne $backgroundInfo) {
             $displayProgram = [string]$backgroundInfo.Config.Executable
             $displayArguments = [string]$backgroundInfo.Config.Arguments
@@ -1845,6 +1905,9 @@ function Get-TaskEditData {
             $backgroundMode = $true
             if (-not [bool]$backgroundInfo.LogDirectoryIsDefault) {
                 $displayLogDirectory = [string]$backgroundInfo.LogDirectory
+            }
+            if ($null -ne $backgroundInfo.PSObject.Properties['Environment']) {
+                $displayEnvironment = $backgroundInfo.Environment
             }
         }
 
@@ -1860,6 +1923,7 @@ function Get-TaskEditData {
             WorkingDirectory = $displayWorkingDirectory
             BackgroundMode = $backgroundMode
             LogDirectory = $displayLogDirectory
+            Environment = $displayEnvironment
             TriggerKind = $triggerKind
             StartDate = $start.Date
             StartTime = $start.ToString('HH:mm')
@@ -2166,7 +2230,7 @@ function Show-TaskEditor {
     [xml]$editorXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="任务" Width="760" Height="760" MinWidth="680" MinHeight="680"
+        Title="任务" Width="760" Height="880" MinWidth="680" MinHeight="800"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
   <Grid Margin="16">
     <Grid.RowDefinitions>
@@ -2180,6 +2244,8 @@ function Show-TaskEditor {
           <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
           <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
@@ -2228,18 +2294,36 @@ function Show-TaskEditor {
         <TextBlock Grid.Row="12" Grid.Column="1" Margin="8,0,4,5" Foreground="#666666" TextWrapping="Wrap"
                    Text="仅用于后台应用。留空时日志保存在上述任务专属目录的 logs 子目录。"/>
         <Separator Grid.Row="13" Grid.ColumnSpan="2" Margin="0,10"/>
-        <Label Grid.Row="14" Grid.Column="0" Content="触发器"/>
-        <ComboBox x:Name="TriggerKindBox" Grid.Row="14" Grid.Column="1" Margin="4" SelectedIndex="0">
+        <Label Grid.Row="14" Grid.Column="0" Content="自定义环境变量"
+               IsEnabled="{Binding IsChecked, ElementName=BackgroundBox}"/>
+        <Grid Grid.Row="14" Grid.Column="1" Margin="4,0"
+              IsEnabled="{Binding IsChecked, ElementName=BackgroundBox}">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="EnvVarsPanel"/>
+          </ScrollViewer>
+          <Button x:Name="AddEnvVarButton" Grid.Row="1" Width="85" Margin="0,4,0,0"
+                  HorizontalAlignment="Left" Content="添加变量"/>
+        </Grid>
+        <TextBlock Grid.Row="15" Grid.Column="1" Margin="8,0,4,5" Foreground="#666666"
+                   TextWrapping="Wrap"
+                   Text="仅用于后台应用。变量名和值均不能为空。同名变量将覆盖继承值。"/>
+        <Separator Grid.Row="16" Grid.ColumnSpan="2" Margin="0,10"/>
+        <Label Grid.Row="17" Grid.Column="0" Content="触发器"/>
+        <ComboBox x:Name="TriggerKindBox" Grid.Row="17" Grid.Column="1" Margin="4" SelectedIndex="0">
           <ComboBoxItem Content="登录时"/><ComboBoxItem Content="单次"/><ComboBoxItem Content="每天"/>
         </ComboBox>
-        <Label Grid.Row="15" Grid.Column="0" Content="开始日期和时间"/>
-        <StackPanel Grid.Row="15" Grid.Column="1" Orientation="Horizontal">
+        <Label Grid.Row="18" Grid.Column="0" Content="开始日期和时间"/>
+        <StackPanel Grid.Row="18" Grid.Column="1" Orientation="Horizontal">
           <DatePicker x:Name="StartDatePicker" Width="180" Margin="4"/>
           <TextBox x:Name="StartTimeBox" Width="90" Margin="4" ToolTip="HH:mm"/>
           <TextBlock Margin="4,7" Text="（登录触发器忽略此项）"/>
         </StackPanel>
-        <Label Grid.Row="16" Grid.Column="0" Content="重复间隔（分钟）"/>
-        <StackPanel Grid.Row="16" Grid.Column="1" Orientation="Horizontal">
+        <Label Grid.Row="19" Grid.Column="0" Content="重复间隔（分钟）"/>
+        <StackPanel Grid.Row="19" Grid.Column="1" Orientation="Horizontal">
           <TextBox x:Name="RepeatMinutesBox" Width="90" Margin="4" Text="0"/>
           <TextBlock Margin="4,7" Text="0 表示不重复；登录触发器不支持重复"/>
         </StackPanel>
@@ -2274,6 +2358,65 @@ function Show-TaskEditor {
     $browseLogDirectoryButton = $window.FindName('BrowseLogDirectoryButton')
     $saveButton = $window.FindName('SaveButton')
     $cancelButton = $window.FindName('CancelButton')
+    $envVarsPanel = $window.FindName('EnvVarsPanel')
+    $addEnvVarButton = $window.FindName('AddEnvVarButton')
+
+    $script:__envVarRows = New-Object 'System.Collections.Generic.List[object]'
+
+    function New-EnvVarRow {
+        $row = New-Object Windows.Controls.Grid
+        $col1 = New-Object Windows.Controls.ColumnDefinition
+        $col1.Width = [Windows.GridLength]::new(130)
+        $col2 = New-Object Windows.Controls.ColumnDefinition
+        $col2.Width = [Windows.GridLength]::new(1, [Windows.GridUnitType]::Star)
+        $col3 = New-Object Windows.Controls.ColumnDefinition
+        $col3.Width = [Windows.GridLength]::new(1, [Windows.GridUnitType]::Star)
+        $col4 = New-Object Windows.Controls.ColumnDefinition
+        $col4.Width = [Windows.GridLength]::Auto
+        [void]$row.ColumnDefinitions.Add($col1)
+        [void]$row.ColumnDefinitions.Add($col2)
+        [void]$row.ColumnDefinitions.Add($col3)
+        [void]$row.ColumnDefinitions.Add($col4)
+
+        $nameBox = New-Object Windows.Controls.TextBox
+        $nameBox.Margin = [Windows.Thickness]::new(2, 2, 4, 2)
+        [Windows.Controls.Grid]::SetColumn($nameBox, 0)
+        [void]$row.Children.Add($nameBox)
+
+        $eqLabel = New-Object Windows.Controls.TextBlock
+        $eqLabel.Text = ' = '
+        $eqLabel.VerticalAlignment = [Windows.VerticalAlignment]::Center
+        $eqLabel.HorizontalAlignment = [Windows.HorizontalAlignment]::Center
+        [Windows.Controls.Grid]::SetColumn($eqLabel, 1)
+        [void]$row.Children.Add($eqLabel)
+
+        $valueBox = New-Object Windows.Controls.TextBox
+        $valueBox.Margin = [Windows.Thickness]::new(4, 2, 2, 2)
+        [Windows.Controls.Grid]::SetColumn($valueBox, 2)
+        [void]$row.Children.Add($valueBox)
+
+        $removeButton = New-Object Windows.Controls.Button
+        $removeButton.Content = '✕'
+        $removeButton.Width = 26
+        $removeButton.Height = 22
+        $removeButton.Margin = [Windows.Thickness]::new(4, 2, 0, 2)
+        $removeButton.FontSize = 11
+        [Windows.Controls.Grid]::SetColumn($removeButton, 3)
+        $removeButton.Add_Click({
+            [void]$envVarsPanel.Children.Remove($row)
+            [void]$script:__envVarRows.Remove($row)
+        })
+        [void]$row.Children.Add($removeButton)
+
+        $row.Margin = [Windows.Thickness]::new(0, 0, 0, 2)
+        [void]$envVarsPanel.Children.Add($row)
+        [void]$script:__envVarRows.Add($row)
+        return @{ NameBox = $nameBox; ValueBox = $valueBox }
+    }
+
+    $addEnvVarButton.Add_Click({
+        [void](New-EnvVarRow)
+    })
 
     foreach ($path in $script:FolderPaths) {
         [void]$taskPathBox.Items.Add($path)
@@ -2290,6 +2433,14 @@ function Show-TaskEditor {
         $backgroundBox.IsChecked = [bool]$ExistingData.BackgroundMode
         if ($null -ne $ExistingData.PSObject.Properties['LogDirectory']) {
             $logDirectoryBox.Text = [string]$ExistingData.LogDirectory
+        }
+        if ($null -ne $ExistingData.PSObject.Properties['Environment'] -and
+            $null -ne $ExistingData.Environment) {
+            foreach ($prop in $ExistingData.Environment.PSObject.Properties) {
+                $envRow = New-EnvVarRow
+                $envRow.NameBox.Text = $prop.Name
+                $envRow.ValueBox.Text = [string]$prop.Value
+            }
         }
         foreach ($item in $triggerKindBox.Items) {
             if ([string]$item.Content -eq $ExistingData.TriggerKind) {
@@ -2446,6 +2597,15 @@ function Show-TaskEditor {
                 if ($answer -ne [Windows.MessageBoxResult]::Yes) { return }
             }
 
+            $envVars = @{}
+            foreach ($row in $script:__envVarRows) {
+                $nameBox = $row.Children[0]
+                $valueBox = $row.Children[2]
+                $key = $nameBox.Text.Trim()
+                if ([string]::IsNullOrEmpty($key)) { continue }
+                $envVars[$key] = $valueBox.Text
+            }
+
             $window.Tag = [PSCustomObject]@{
                 TaskPath = $normalizedPath
                 TaskName = $name
@@ -2456,6 +2616,7 @@ function Show-TaskEditor {
                 WorkingDirectory = [string]$workingDirectoryBox.Text
                 BackgroundMode = [bool]$backgroundBox.IsChecked
                 LogDirectory = [string]$logDirectoryBox.Text
+                Environment = $envVars
                 TriggerKind = $kind
                 StartDateTime = $startDateTime
                 RepeatMinutes = $repeatMinutes
