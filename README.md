@@ -27,6 +27,14 @@ UserTaskManager 是一个面向普通 Windows 用户的轻量级计划任务管�
 .\build.ps1 -SourcePath .\UserTaskManager.ps1 -OutputPath D:\Tools\UserTaskManager.cmd
 ```
 
+窗口和任务栏图标的设计母版保存在 `assets\UserTaskManager.svg`。构建器仅使用 Windows PowerShell 5.1 和 .NET Framework WPF 读取这个 SVG，在内存中渲染 16、20、24、32、48、64、128、256 px 的透明 PNG，随后打包为多尺寸 ICO，并将 ICO 的 Base64 注入生成的 CMD。构建过程不会向仓库写入 PNG 或 ICO；`.gitignore` 也会忽略 `assets` 下意外产生的这两类中间文件。可通过 `-IconPath` 选择兼容的 SVG 母版：
+
+```powershell
+.\build.ps1 -IconPath .\assets\UserTaskManager.svg
+```
+
+内置渲染器有意只支持当前母版使用的 `rect`、`circle`、`line`、`path` 以及纯色填充和描边，不依赖浏览器或第三方 SVG 库。直接运行仓库中的 `UserTaskManager.ps1` 时仍可启动，但只有构建后的 CMD 包含自定义图标。
+
 然后双击生成的 `UserTaskManager.cmd`。它是一个 CMD/PowerShell polyglot 文件：开头的批处理包装器读取同一个文件中的 PowerShell 应用代码。包装器明确调用：
 
 ```text
@@ -149,7 +157,8 @@ Task Scheduler 直接跟踪这个 PowerShell 进程。包装器通过 `CreatePro
 5. 验证不同文件夹中的同名任务会映射到不同的 SHA-256 后台运行目录；
 6. 使用主应用自身函数创建一个唯一后台任务，验证直接 PowerShell action、Version 3 配置、无窗口、自定义日志目录、无限运行时间、IgnoreNew 和 `stdout.log`；
 7. 启动“包装器 → 目标进程 → 长时间运行孙进程”的真实进程树，验证 `Stop(0)` 通过 Job Object 将三层进程全部终止；
-8. 验证清理自定义日志时不会删除非任务文件，并在 `finally` 中清理本次测试创建的所有任务、进程及测试文件。
+8. 验证 SVG 图标在内存中渲染、打包、注入，构建产物能加载自定义 WPF 图标，且仓库不产生 PNG/ICO 中间文件；
+9. 验证清理自定义日志时不会删除非任务文件，并在 `finally` 中清理本次测试创建的所有任务、进程及测试文件。
 
 测试不修改、禁用或删除任何既有任务，也不创建或删除任务文件夹。如果当前用户无权在根目录注册任务，测试会报告 Access denied 并退出，不请求提升。
 

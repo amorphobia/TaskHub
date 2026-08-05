@@ -45,6 +45,7 @@ $script:AppName = 'UserTaskManager'
 $script:TaskService = $null
 $script:MainWindow = $null
 $script:IsBusy = $false
+$script:MainIconLoaded = $false
 $script:TaskContextMenu = $null
 $script:TaskContextRunItem = $null
 $script:TaskContextStopItem = $null
@@ -59,6 +60,7 @@ $script:CurrentSid = $script:CurrentIdentity.User.Value
 $script:CurrentUserName = $script:CurrentIdentity.Name
 $script:LogDirectory = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'UserTaskManager'
 $script:LogPath = Join-Path $script:LogDirectory 'UserTaskManager.log'
+$script:EmbeddedIconBase64 = '__USER_TASK_MANAGER_ICON_BASE64__'
 
 # Task Scheduler constants.
 $script:TASK_CREATE = 2
@@ -760,6 +762,43 @@ function New-BackgroundActionValues {
         PowershellPath = $powershellPath
         ActionPath = $actionPath
         ActionArguments = $actionArguments
+    }
+}
+
+function Set-MainWindowIcon {
+    param([Parameter(Mandatory = $true)][Windows.Window]$Window)
+
+    # The repository source contains a short marker. build.ps1 replaces it with
+    # an in-memory ICO; direct source execution remains valid but has no custom icon.
+    if ([string]::IsNullOrWhiteSpace($script:EmbeddedIconBase64) -or
+        $script:EmbeddedIconBase64.Length -lt 100) {
+        return $false
+    }
+
+    $stream = $null
+    try {
+        $iconBytes = [Convert]::FromBase64String($script:EmbeddedIconBase64)
+        $stream = New-Object IO.MemoryStream(, $iconBytes)
+        $decoder = New-Object Windows.Media.Imaging.IconBitmapDecoder(
+            $stream,
+            [Windows.Media.Imaging.BitmapCreateOptions]::PreservePixelFormat,
+            [Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+        )
+        $frame = $decoder.Frames |
+            Sort-Object PixelWidth, PixelHeight -Descending |
+            Select-Object -First 1
+        if ($null -eq $frame) {
+            throw '嵌入的 ICO 不包含可用图像。'
+        }
+        $Window.Icon = $frame
+        return $true
+    }
+    catch {
+        Write-AppLog -Level WARN -Message ('加载嵌入图标失败：{0}' -f $_.Exception.Message)
+        return $false
+    }
+    finally {
+        if ($null -ne $stream) { $stream.Dispose() }
     }
 }
 
@@ -2616,6 +2655,7 @@ function Show-DeleteTaskDialog {
 
 $mainReader = New-Object Xml.XmlNodeReader $mainXaml
 $script:MainWindow = [Windows.Markup.XamlReader]::Load($mainReader)
+$script:MainIconLoaded = Set-MainWindowIcon -Window $script:MainWindow
 $script:FolderTree = $script:MainWindow.FindName('FolderTree')
 $script:TaskGrid = $script:MainWindow.FindName('TaskGrid')
 $script:DetailText = $script:MainWindow.FindName('DetailText')
@@ -2915,11 +2955,12 @@ if ($SmokeTest) {
         Connect-TaskService
         $smokeErrors = @(Refresh-FolderTree)
         $smokeModels = @(Get-FolderTaskModels -FolderPath '\')
-        Write-Output ('SMOKE OK: STA={0}; Folders={1}; RootTasks={2}; SkippedFolders={3}' -f
+        Write-Output ('SMOKE OK: STA={0}; Folders={1}; RootTasks={2}; SkippedFolders={3}; Icon={4}' -f
             [Threading.Thread]::CurrentThread.ApartmentState,
             $script:FolderPaths.Count,
             $smokeModels.Count,
-            $smokeErrors.Count)
+            $smokeErrors.Count,
+            $script:MainIconLoaded)
     }
     finally {
         Release-ComObject $script:TaskService

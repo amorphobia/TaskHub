@@ -45,6 +45,7 @@ $results = New-Object 'System.Collections.Generic.List[string]'
 $service = $null
 $root = $null
 $backgroundCustomLogDirectory = $null
+$iconBuildOutput = $null
 
 function Release-ComObject {
     param([object]$Value)
@@ -322,6 +323,27 @@ try {
         Assert-True ($null -ne $taskEditorAst -and
             $taskEditorAst.Extent.Text -match 'browseLogDirectoryButton\.Add_Click') '日志目录浏览事件绑定在任务编辑器中'
 
+        $sourceText = [IO.File]::ReadAllText($mainScriptPath, [Text.Encoding]::UTF8)
+        Assert-True ([Text.RegularExpressions.Regex]::Matches(
+            $sourceText,
+            [Text.RegularExpressions.Regex]::Escape('__USER_TASK_MANAGER_ICON_BASE64__')
+        ).Count -eq 1) '主脚本包含唯一的构建时图标注入标记'
+        $iconBuildOutput = Join-Path $env:TEMP ('UserTaskManager.Test.{0}.cmd' -f ([Guid]::NewGuid().ToString('N')))
+        & (Join-Path $PSScriptRoot 'build.ps1') -OutputPath $iconBuildOutput
+        Assert-True ([IO.File]::Exists($iconBuildOutput)) '构建器生成临时 CMD'
+        $builtBytes = [IO.File]::ReadAllBytes($iconBuildOutput)
+        Assert-True (-not ($builtBytes[0] -eq 0xEF -and $builtBytes[1] -eq 0xBB -and $builtBytes[2] -eq 0xBF)) '图标构建产物保持 UTF-8 无 BOM'
+        $builtText = [IO.File]::ReadAllText($iconBuildOutput, (New-Object Text.UTF8Encoding($false)))
+        Assert-True (-not $builtText.Contains('__USER_TASK_MANAGER_ICON_BASE64__')) 'SVG 渲染所得 ICO Base64 已注入构建产物'
+        $builtSmokeOutput = @(& $env:ComSpec /d /c $iconBuildOutput -SmokeTest 2>&1)
+        Assert-True ($LASTEXITCODE -eq 0 -and ($builtSmokeOutput -join "`n") -match 'SMOKE OK:.*Icon=True') '构建产物成功加载自定义 WPF 图标'
+        $assetDirectory = Join-Path $PSScriptRoot 'assets'
+        $generatedImageFiles = @(
+            Get-ChildItem -LiteralPath $assetDirectory -File -ErrorAction Stop |
+                Where-Object { $_.Extension -in @('.png', '.ico') }
+        )
+        Assert-True ($generatedImageFiles.Count -eq 0) 'SVG 构建没有在仓库保留 PNG 或 ICO 中间文件'
+
         $enabledMenuModel = [PSCustomObject]@{ Enabled = $true }
         Update-TaskContextMenu -TaskModel $enabledMenuModel
         Assert-True (
@@ -517,6 +539,18 @@ catch {
     exit 1
 }
 finally {
+    if (-not [string]::IsNullOrWhiteSpace($iconBuildOutput) -and [IO.File]::Exists($iconBuildOutput)) {
+        try {
+            $expectedTempRoot = [IO.Path]::GetFullPath($env:TEMP).TrimEnd('\') + '\'
+            $iconBuildFullPath = [IO.Path]::GetFullPath($iconBuildOutput)
+            if ($iconBuildFullPath.StartsWith($expectedTempRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                [IO.File]::Delete($iconBuildFullPath)
+            }
+        }
+        catch {
+            Write-Warning ('清理临时图标构建产物失败：{0}；{1}' -f $iconBuildOutput, $_.Exception.Message)
+        }
+    }
     if ($null -ne $root) {
         foreach ($name in @($createdNames)) {
             try {
