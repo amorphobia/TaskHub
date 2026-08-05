@@ -118,13 +118,11 @@ GUI 不提供 SYSTEM、LocalService、NetworkService、其他用户、HighestAva
 
 Task Scheduler 直接跟踪这个 PowerShell 进程。包装器通过 `CreateProcessW` 以挂起状态创建目标程序，先将其加入设置了 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object，再恢复主线程。这样目标程序来不及在受管范围之外创建子进程；停止任务导致包装器退出并关闭 Job 句柄时，Windows 内核会终止 Job 中的目标程序及其后代。
 
-目标程序的 stdout/stderr 句柄直接指向日志文件，不经过 PowerShell、`cmd.exe` 或文本编码转换；日志字节编码由目标程序自身决定。整个链路不使用 `ExecutionPolicy Bypass`，不请求提升，也不需要 `run.vbs`。
-
-旧版 Version 1/2 的 `wscript.exe + run.vbs` 后台任务仍可识别、编辑和删除。编辑并保存旧任务时会迁移为 Version 3 的直接 PowerShell action，并删除旧 `run.vbs`。旧任务在迁移前仍具有原启动链的停止限制；要获得完整进程树终止能力，需要编辑并保存一次。
+目标程序的 stdout/stderr 句柄直接指向日志文件，不经过 PowerShell、`cmd.exe` 或文本编码转换；日志字节编码由目标程序自身决定。整个链路不使用 `ExecutionPolicy Bypass`，不请求提升。
 
 后台任务使用无限执行时间（`PT0S`），不会沿用普通任务的 72 小时上限；多实例策略设为 IgnoreNew，已有服务实例运行时不会因重复触发再启动一个实例。
 
-删除后台任务时，`wrapper.ps1`、`config.json` 和旧任务可能残留的 `run.vbs` 始终删除。删除确认框中可以选择是否同时删除日志；默认保留日志。默认日志目录可以整体清理；对于自定义目录，程序只删除该任务生成的 `stdout.log`、`stderr.log` 和 `wrapper-error.log`，不会递归删除目录中的其他文件。若长期运行的进程仍占用日志，程序会有限重试，之后保留日志并给出明确提示。
+删除后台任务时，`wrapper.ps1` 和 `config.json` 始终删除。删除确认框中可以选择是否同时删除日志；默认保留日志。默认日志目录可以整体清理；对于自定义目录，程序只删除该任务生成的 `stdout.log`、`stderr.log` 和 `wrapper-error.log`，不会递归删除目录中的其他文件。若长期运行的进程仍占用日志，程序会有限重试，之后保留日志并给出明确提示。
 
 ## 日志
 
@@ -155,7 +153,7 @@ Task Scheduler 直接跟踪这个 PowerShell 进程。包装器通过 `CreatePro
 3. 验证 InteractiveToken、LeastPrivilege 和独立的 action 字段；
 4. 仅对唯一测试任务执行启用、禁用、立即运行和停止；
 5. 验证不同文件夹中的同名任务会映射到不同的 SHA-256 后台运行目录；
-6. 使用主应用自身函数创建一个唯一后台任务，验证直接 PowerShell action、Version 3 配置、无窗口、自定义日志目录、无限运行时间、IgnoreNew 和 `stdout.log`；
+6. 使用主应用自身函数创建一个唯一后台任务，验证直接 PowerShell action、Version 1 配置、无窗口、自定义日志目录、无限运行时间、IgnoreNew 和 `stdout.log`；
 7. 启动“包装器 → 目标进程 → 长时间运行孙进程”的真实进程树，验证 `Stop(0)` 通过 Job Object 将三层进程全部终止；
 8. 验证 SVG 图标在内存中渲染、打包、注入，构建产物能加载自定义 WPF 图标，且仓库不产生 PNG/ICO 中间文件；
 9. 验证清理自定义日志时不会删除非任务文件，并在 `finally` 中清理本次测试创建的所有任务、进程及测试文件。

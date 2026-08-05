@@ -373,12 +373,6 @@ try {
         $defaultValues = Get-BackgroundActionValues $backgroundFullPath
         $defaultLog = Resolve-BackgroundLogDirectory -RequestedPath '' -DefaultPath $defaultValues.DefaultLogDirectory
         Assert-True ($defaultLog.IsDefault -and [string]::Equals($defaultLog.Path, [IO.Path]::GetFullPath($defaultValues.DefaultLogDirectory), [StringComparison]::OrdinalIgnoreCase)) '留空日志路径会解析到任务专属默认 logs 目录'
-        $legacyActionValues = New-BackgroundActionValues -RuntimeDirectory $defaultValues.RuntimeDirectory -Scheme 'HashedV2'
-        $legacyAction = [PSCustomObject]@{
-            Path = $legacyActionValues.ActionPath
-            Arguments = $legacyActionValues.ActionArguments
-        }
-        Assert-True (Test-ActionTargetsBackgroundRunner -FullTaskPath $backgroundFullPath -Action $legacyAction) '仍可识别 Version 2 的 wscript + run.vbs action'
 
         $backgroundData = [PSCustomObject]@{
             TaskPath = '\'
@@ -417,12 +411,11 @@ try {
             $backgroundSettings = $backgroundDefinition.Settings
             $backgroundRuntime = Get-BackgroundRuntimeInfo -FullTaskPath $backgroundFullPath -Action $backgroundAction
             $expectedWrapperPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-            Assert-True ($null -ne $backgroundRuntime -and $backgroundRuntime.Scheme -eq 'DirectPowerShellV3') '后台测试任务使用直接 PowerShell Version 3 包装器'
+            Assert-True ($null -ne $backgroundRuntime) '后台测试任务被正确识别为后台应用'
             Assert-True ([string]::Equals([string]$backgroundAction.Path, $expectedWrapperPowerShell, [StringComparison]::OrdinalIgnoreCase)) 'Task Scheduler 直接跟踪系统 Windows PowerShell'
             Assert-True ([string]$backgroundAction.Arguments -match '^-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File ') '包装器 action 使用隐藏且非交互的 PowerShell 参数'
             Assert-True ([string]::Equals([string]$backgroundAction.WorkingDirectory, $backgroundRuntime.RuntimeDirectory, [StringComparison]::OrdinalIgnoreCase)) '包装器 action 使用任务专属运行目录'
-            Assert-True ([int]$backgroundRuntime.Config.Version -eq 3) '后台配置版本为 3'
-            Assert-True (-not [IO.File]::Exists($backgroundRuntime.RunVbsPath)) '后台任务不部署 run.vbs'
+            Assert-True ([int]$backgroundRuntime.Config.Version -eq 1) '后台配置版本为 1'
             Assert-True (-not [bool]$backgroundRuntime.LogDirectoryIsDefault) '后台测试任务识别为自定义日志目录'
             Assert-True ([string]::Equals($backgroundRuntime.LogDirectory, [IO.Path]::GetFullPath($backgroundCustomLogDirectory), [StringComparison]::OrdinalIgnoreCase)) '后台任务日志写入规范化的自定义目录'
             Assert-True ([string]$backgroundSettings.ExecutionTimeLimit -eq 'PT0S') '后台测试任务没有 72 小时执行上限'

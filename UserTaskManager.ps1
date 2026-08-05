@@ -725,43 +725,20 @@ function Get-BackgroundRuntimeDirectory {
     return $runtimeDirectory
 }
 
-function Get-LegacyBackgroundRuntimeDirectory {
-    param([Parameter(Mandatory = $true)][string]$FullTaskPath)
-    $parts = Split-RegisteredTaskPath $FullTaskPath
-    if ($parts.Name.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0) { return $null }
-    $runtimeRoot = [IO.Path]::GetFullPath($script:LogDirectory)
-    $legacyDirectory = [IO.Path]::GetFullPath((Join-Path $runtimeRoot $parts.Name))
-    $requiredPrefix = $runtimeRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-    if (-not $legacyDirectory.StartsWith($requiredPrefix, [StringComparison]::OrdinalIgnoreCase)) { return $null }
-    return $legacyDirectory
-}
-
 function New-BackgroundActionValues {
     param(
-        [Parameter(Mandatory = $true)][string]$RuntimeDirectory,
-        [Parameter(Mandatory = $true)][string]$Scheme
+        [Parameter(Mandatory = $true)][string]$RuntimeDirectory
     )
-    $runVbsPath = Join-Path $RuntimeDirectory 'run.vbs'
-    $wscriptPath = Join-Path $env:SystemRoot 'System32\wscript.exe'
     $powershellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $wrapperPath = Join-Path $RuntimeDirectory 'wrapper.ps1'
-    $actionPath = $wscriptPath
-    $actionArguments = '//B //Nologo "{0}"' -f $runVbsPath
-    if ($Scheme -eq 'DirectPowerShellV3') {
-        $actionPath = $powershellPath
-        $actionArguments = '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File "{0}"' -f $wrapperPath
-    }
     return [PSCustomObject]@{
-        Scheme = $Scheme
         RuntimeDirectory = $RuntimeDirectory
-        RunVbsPath = $runVbsPath
         WrapperPath = $wrapperPath
         ConfigPath = Join-Path $RuntimeDirectory 'config.json'
         DefaultLogDirectory = Join-Path $RuntimeDirectory 'logs'
-        WscriptPath = $wscriptPath
         PowershellPath = $powershellPath
-        ActionPath = $actionPath
-        ActionArguments = $actionArguments
+        ActionPath = $powershellPath
+        ActionArguments = '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File "{0}"' -f $wrapperPath
     }
 }
 
@@ -830,20 +807,12 @@ function Invoke-MainToolbarAction {
 
 function Get-BackgroundActionValues {
     param([Parameter(Mandatory = $true)][string]$FullTaskPath)
-    return New-BackgroundActionValues -RuntimeDirectory (Get-BackgroundRuntimeDirectory $FullTaskPath) -Scheme 'DirectPowerShellV3'
+    return New-BackgroundActionValues -RuntimeDirectory (Get-BackgroundRuntimeDirectory $FullTaskPath)
 }
 
 function Get-BackgroundActionCandidates {
     param([Parameter(Mandatory = $true)][string]$FullTaskPath)
-    $candidates = New-Object 'System.Collections.Generic.List[object]'
-    $candidates.Add((Get-BackgroundActionValues $FullTaskPath))
-    $hashedDirectory = Get-BackgroundRuntimeDirectory $FullTaskPath
-    $candidates.Add((New-BackgroundActionValues -RuntimeDirectory $hashedDirectory -Scheme 'HashedV2'))
-    $legacyDirectory = Get-LegacyBackgroundRuntimeDirectory $FullTaskPath
-    if (-not [string]::IsNullOrWhiteSpace($legacyDirectory)) {
-        $candidates.Add((New-BackgroundActionValues -RuntimeDirectory $legacyDirectory -Scheme 'LegacyTaskName'))
-    }
-    return $candidates
+    return @(Get-BackgroundActionValues $FullTaskPath)
 }
 
 function Resolve-BackgroundLogDirectory {
@@ -905,7 +874,7 @@ function Get-BackgroundRuntimeInfo {
             }
             $config = Read-BackgroundConfig $values.ConfigPath
             if ($null -eq $config -or $null -eq $config.PSObject.Properties['Version'] -or
-                @(1, 2, 3) -notcontains [int]$config.Version -or
+                [int]$config.Version -ne 1 -or
                 -not [string]::Equals([string]$config.TaskFullPath, $FullTaskPath, [StringComparison]::OrdinalIgnoreCase)) {
                 continue
             }
@@ -916,9 +885,7 @@ function Get-BackgroundRuntimeInfo {
             $resolvedLog = Resolve-BackgroundLogDirectory -RequestedPath $requestedLogDirectory -DefaultPath $values.DefaultLogDirectory
             return [PSCustomObject]@{
                 FullTaskPath = $FullTaskPath
-                Scheme = $values.Scheme
                 RuntimeDirectory = $values.RuntimeDirectory
-                RunVbsPath = $values.RunVbsPath
                 WrapperPath = $values.WrapperPath
                 ConfigPath = $values.ConfigPath
                 DefaultLogDirectory = $values.DefaultLogDirectory
@@ -927,7 +894,6 @@ function Get-BackgroundRuntimeInfo {
                 StdOutPath = Join-Path $resolvedLog.Path 'stdout.log'
                 StdErrPath = Join-Path $resolvedLog.Path 'stderr.log'
                 WrapperErrorPath = Join-Path $resolvedLog.Path 'wrapper-error.log'
-                WscriptPath = $values.WscriptPath
                 PowershellPath = $values.PowershellPath
                 ActionPath = $values.ActionPath
                 ActionArguments = $values.ActionArguments
@@ -1026,7 +992,7 @@ function Install-BackgroundRuntime {
         [void][IO.Directory]::CreateDirectory($resolvedLog.Path)
     }
 
-    $managedPaths = @($values.WrapperPath, $values.RunVbsPath, $values.ConfigPath)
+    $managedPaths = @($values.WrapperPath, $values.ConfigPath)
     $previousFiles = New-Object 'System.Collections.Generic.List[object]'
     foreach ($path in $managedPaths) {
         $exists = [IO.File]::Exists($path)
@@ -1047,7 +1013,7 @@ function Install-BackgroundRuntime {
 
     try {
         $config = [ordered]@{
-            Version = 3
+            Version = 1
             TaskFullPath = $FullTaskPath
             TaskName = [string]$Data.TaskName
             Executable = [string]$Data.Program
@@ -1059,9 +1025,6 @@ function Install-BackgroundRuntime {
         $configJson = $config | ConvertTo-Json -Depth 3
         [IO.File]::WriteAllText($values.WrapperPath, $script:BackgroundWrapperContent, (New-Object Text.UTF8Encoding($true)))
         [IO.File]::WriteAllText($values.ConfigPath, $configJson, (New-Object Text.UTF8Encoding($true)))
-        if ([IO.File]::Exists($values.RunVbsPath)) {
-            [IO.File]::Delete($values.RunVbsPath)
-        }
         Write-AppLog -Message ('已部署后台运行文件：{0}' -f $values.RuntimeDirectory)
         return $state
     }
@@ -1077,18 +1040,12 @@ function Remove-BackgroundRuntimeFiles {
         [bool]$DeleteLogs = $false
     )
     $runtimeDirectory = [IO.Path]::GetFullPath([string]$RuntimeInfo.RuntimeDirectory)
-    $allowedRuntimeDirectory = $false
-    foreach ($candidate in @(Get-BackgroundActionCandidates $RuntimeInfo.FullTaskPath)) {
-        if ([string]::Equals($runtimeDirectory, [IO.Path]::GetFullPath($candidate.RuntimeDirectory), [StringComparison]::OrdinalIgnoreCase)) {
-            $allowedRuntimeDirectory = $true
-            break
-        }
-    }
-    if (-not $allowedRuntimeDirectory) {
+    $expectedDirectory = [IO.Path]::GetFullPath((Get-BackgroundRuntimeDirectory $RuntimeInfo.FullTaskPath))
+    if (-not [string]::Equals($runtimeDirectory, $expectedDirectory, [StringComparison]::OrdinalIgnoreCase)) {
         throw '拒绝清理：后台运行目录与完整任务路径不匹配。'
     }
 
-    foreach ($path in @($RuntimeInfo.WrapperPath, $RuntimeInfo.RunVbsPath, $RuntimeInfo.ConfigPath)) {
+    foreach ($path in @($RuntimeInfo.WrapperPath, $RuntimeInfo.ConfigPath)) {
         if ([IO.File]::Exists($path)) {
             [IO.File]::Delete($path)
         }
@@ -2539,7 +2496,7 @@ function Show-DeleteTaskDialog {
     <TextBox x:Name="PathText" Grid.Row="1" Margin="0,10,0,10" IsReadOnly="True"
              TextWrapping="Wrap" BorderThickness="1" Padding="7"/>
     <TextBlock Grid.Row="2" Foreground="#A00000" TextWrapping="Wrap"
-               Text="任务删除后无法由本程序恢复。若这是后台应用，wrapper.ps1、config.json 以及旧任务残留的 run.vbs 会一并删除。"/>
+               Text="任务删除后无法由本程序恢复。若这是后台应用，wrapper.ps1 和 config.json 会一并删除。"/>
     <CheckBox x:Name="DeleteLogsBox" Grid.Row="3" Margin="0,14,0,0" VerticalAlignment="Top"
               Content="同时删除该后台任务生成的日志文件（自定义目录中的其他文件不会删除）"/>
     <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
@@ -2755,6 +2712,29 @@ $script:MainWindow.FindName('EnableButton').Add_Click({
 $script:MainWindow.FindName('DisableButton').Add_Click({
     Invoke-WithSelectedTask -OperationName '禁用' -Operation {
         param($folder, $task, $model)
+        if ([int]$task.State -eq 4) {
+            $definition = $null
+            $actions = $null
+            $taskAction = $null
+            $runtimeInfo = $null
+            try {
+                $definition = $task.Definition
+                $actions = $definition.Actions
+                if ([int]$actions.Count -eq 1) {
+                    $taskAction = $actions.Item(1)
+                    $runtimeInfo = Get-BackgroundRuntimeInfo -FullTaskPath $model.Path -Action $taskAction
+                }
+            }
+            finally {
+                Release-ComObject $taskAction
+                Release-ComObject $actions
+                Release-ComObject $definition
+            }
+            if ($null -ne $runtimeInfo) {
+                $task.Stop(0)
+                Write-AppLog -Message ('禁用前已停止运行中的后台应用：{0}' -f $model.Path)
+            }
+        }
         $task.Enabled = $false
     }
 })
