@@ -1,4 +1,4 @@
-﻿#requires -version 5.1
+#requires -version 5.1
 <#
     Builds UserTaskManager.ps1 into a self-starting CMD/PowerShell polyglot.
     The generated file runs with the caller's token in Windows PowerShell STA.
@@ -39,10 +39,10 @@ $outputFullPath = Get-FullPath $OutputPath
 $iconFullPath = Get-FullPath $IconPath
 
 if (-not [IO.File]::Exists($iconFullPath)) {
-    throw ('找不到 SVG 图标母版：{0}' -f $iconFullPath)
+    throw ('SVG icon source not found: {0}' -f $iconFullPath)
 }
 if ([IO.Path]::GetExtension($outputFullPath) -ine '.cmd') {
-    throw ('输出文件必须使用 .cmd 扩展名：{0}' -f $outputFullPath)
+    throw ('Output file must use .cmd extension: {0}' -f $outputFullPath)
 }
 Add-Type -AssemblyName PresentationCore, WindowsBase
 
@@ -154,13 +154,13 @@ function Draw-SvgElement {
         'path' {
             $data = [string](Get-SvgAttribute $Element 'd')
             if ([string]::IsNullOrWhiteSpace($data)) {
-                throw 'SVG path 缺少 d 属性。'
+                throw 'SVG path element missing d attribute.'
             }
             $geometry = [Windows.Media.Geometry]::Parse($data)
             $DrawingContext.DrawGeometry($fill, $pen, $geometry)
         }
         default {
-            throw ('SVG 图标包含构建器不支持的元素：{0}' -f $Element.LocalName)
+            throw ('SVG icon contains unsupported element: {0}' -f $Element.LocalName)
         }
     }
 }
@@ -172,18 +172,18 @@ function Convert-SvgToPngBytes {
     )
     $root = $SvgDocument.DocumentElement
     if ($null -eq $root -or $root.LocalName -ne 'svg') {
-        throw '图标母版根元素必须是 svg。'
+        throw 'Icon source root element must be svg.'
     }
     $viewBoxParts = @(([string]$root.GetAttribute('viewBox')) -split '[,\s]+' | Where-Object { $_ })
     if ($viewBoxParts.Count -ne 4) {
-        throw 'SVG 图标必须提供四个数值组成的 viewBox。'
+        throw 'SVG icon must provide a four-value viewBox.'
     }
     $viewX = ConvertFrom-SvgNumber $viewBoxParts[0]
     $viewY = ConvertFrom-SvgNumber $viewBoxParts[1]
     $viewWidth = ConvertFrom-SvgNumber $viewBoxParts[2]
     $viewHeight = ConvertFrom-SvgNumber $viewBoxParts[3]
     if ($viewWidth -le 0 -or $viewHeight -le 0) {
-        throw 'SVG viewBox 尺寸无效。'
+        throw 'SVG viewBox size is invalid.'
     }
 
     $visual = New-Object Windows.Media.DrawingVisual
@@ -284,7 +284,7 @@ $sourceTextBuilder = New-Object Text.StringBuilder
 foreach ($file in $sourceFiles) {
     $fullPath = Join-Path $srcDirectory $file
     if (-not [IO.File]::Exists($fullPath)) {
-        throw ('找不到源文件：{0}' -f $fullPath)
+        throw ('Source file not found: {0}' -f $fullPath)
     }
     [void]$sourceTextBuilder.Append([IO.File]::ReadAllText($fullPath, [Text.Encoding]::UTF8))
 }
@@ -299,9 +299,9 @@ $parseErrors = $null
 )
 if ($parseErrors.Count -gt 0) {
     $details = $parseErrors | ForEach-Object {
-        '第 {0} 行，第 {1} 列：{2}' -f $_.Extent.StartLineNumber, $_.Extent.StartColumnNumber, $_.Message
+        'Line {0}, Column {1}: {2}' -f $_.Extent.StartLineNumber, $_.Extent.StartColumnNumber, $_.Message
     }
-    throw ("源脚本语法检查失败：`n{0}" -f ($details -join [Environment]::NewLine))
+    throw ("Source syntax check failed:`n{0}" -f ($details -join [Environment]::NewLine))
 }
 $iconMarker = '__USER_TASK_MANAGER_ICON_BASE64__'
 $markerCount = [Text.RegularExpressions.Regex]::Matches(
@@ -309,7 +309,7 @@ $markerCount = [Text.RegularExpressions.Regex]::Matches(
     [Text.RegularExpressions.Regex]::Escape($iconMarker)
 ).Count
 if ($markerCount -ne 1) {
-    throw ('主脚本必须且只能包含一个图标注入标记；实际数量：{0}' -f $markerCount)
+    throw ('Source must contain exactly one icon injection marker; found: {0}' -f $markerCount)
 }
 $iconBase64 = Convert-SvgToIconBase64 -Path $iconFullPath
 $sourceText = $sourceText.Replace($iconMarker, $iconBase64)
@@ -338,7 +338,7 @@ if (-not [string]::IsNullOrWhiteSpace($outputDirectory) -and
 [IO.File]::WriteAllText($outputFullPath, $header + $sourceText, $utf8WithoutBom)
 
 $outputInfo = Get-Item -LiteralPath $outputFullPath
-Write-Host ('构建成功：{0}' -f $outputInfo.FullName) -ForegroundColor Green
-Write-Host ('文件大小：{0} 字节' -f $outputInfo.Length)
-Write-Host ('图标：{0}（内存渲染 8 个 PNG 尺寸并打包 ICO）' -f $iconFullPath)
-Write-Host '启动方式：双击生成的 CMD，或从命令行运行它。'
+Write-Host ('Build succeeded: {0}' -f $outputInfo.FullName) -ForegroundColor Green
+Write-Host ('File size: {0} bytes' -f $outputInfo.Length)
+Write-Host ('Icon: {0} (rendered 8 PNG sizes in-memory and packed ICO)' -f $iconFullPath)
+Write-Host 'Usage: double-click the generated CMD, or run it from the command line.'

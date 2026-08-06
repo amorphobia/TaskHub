@@ -1,4 +1,4 @@
-﻿#requires -version 5.1
+#requires -version 5.1
 <#
     UserTaskManager - a least-privilege WPF front end for Task Scheduler 2.0.
     It deliberately uses the caller's token and never requests elevation.
@@ -72,7 +72,3 @@ $script:TASK_TRIGGER_TIME = 1
 $script:TASK_TRIGGER_DAILY = 2
 $script:TASK_TRIGGER_LOGON = 9
 $script:TASK_ACTION_EXEC = 0
-
-# The wrapper is embedded so the project does not depend on standalone helper
-# files. Background tasks receive a private wrapper.ps1 copy under
-# %LOCALAPPDATA%\UserTaskManager\Tasks\<full-task-path-sha256>\.

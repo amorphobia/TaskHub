@@ -1,3 +1,6 @@
+# The wrapper is embedded so the project does not depend on standalone helper
+# files. Background tasks receive a private wrapper.ps1 copy under
+# %LOCALAPPDATA%\UserTaskManager\Tasks\<full-task-path-sha256>\.
 $script:BackgroundWrapperContent = @'
 #requires -version 5.1
 [CmdletBinding()]

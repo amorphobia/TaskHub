@@ -1,4 +1,4 @@
-﻿#requires -version 5.1
+#requires -version 5.1
 <#
     Safe integration tests for UserTaskManager.
     Only uniquely named tasks created by this process are touched, and all are
@@ -60,9 +60,9 @@ function Assert-True {
         [string]$Message
     )
     if (-not $Condition) {
-        throw ('断言失败：{0}' -f $Message)
+        throw ('Assertion failed: {0}' -f $Message)
     }
-    $script:results.Add(('通过：{0}' -f $Message))
+    $script:results.Add(('Passed: {0}' -f $Message))
 }
 
 function Get-DescendantProcessRows {
@@ -190,7 +190,7 @@ function Register-TestTask {
     $definition = $null
     $task = $null
     try {
-        $definition = New-TestDefinition -Kind $Kind -Description ('UserTaskManager 安全测试；唯一名称={0}' -f $Name)
+        $definition = New-TestDefinition -Kind $Kind -Description ('UserTaskManager safety test; unique name={0}' -f $Name)
         $task = $script:root.RegisterTaskDefinition(
             $Name,
             $definition,
@@ -201,7 +201,7 @@ function Register-TestTask {
             $null
         )
         $script:createdNames.Add($Name)
-        Assert-True ($task.Path -eq ('\' + $Name)) ('创建唯一测试任务 {0}' -f $Name)
+        Assert-True ($task.Path -eq ('\' + $Name)) ('Created unique test task {0}' -f $Name)
     }
     finally {
         Release-ComObject $task
@@ -230,12 +230,12 @@ function Verify-TestTask {
         $actions = $definition.Actions
         $action = $actions.Item(1)
 
-        Assert-True ([int]$principal.LogonType -eq $TASK_LOGON_INTERACTIVE_TOKEN) ('{0} 使用 InteractiveToken' -f $Name)
-        Assert-True ([int]$principal.RunLevel -eq $TASK_RUNLEVEL_LUA) ('{0} 使用 LeastPrivilege' -f $Name)
-        Assert-True ([int]$trigger.Type -eq $ExpectedTriggerType) ('{0} 触发器类型正确' -f $Name)
-        Assert-True ([int]$actions.Count -eq 1 -and [int]$action.Type -eq $TASK_ACTION_EXEC) ('{0} 只有一个 Exec 操作' -f $Name)
-        Assert-True ([string]$action.Arguments -eq '127.0.0.1 -n 6') ('{0} 参数按独立字段原样保存' -f $Name)
-        Assert-True ([string]$action.WorkingDirectory -eq [Environment]::GetFolderPath('LocalApplicationData')) ('{0} 工作目录按独立字段保存' -f $Name)
+        Assert-True ([int]$principal.LogonType -eq $TASK_LOGON_INTERACTIVE_TOKEN) ('{0} uses InteractiveToken' -f $Name)
+        Assert-True ([int]$principal.RunLevel -eq $TASK_RUNLEVEL_LUA) ('{0} uses LeastPrivilege' -f $Name)
+        Assert-True ([int]$trigger.Type -eq $ExpectedTriggerType) ('{0} trigger type correct' -f $Name)
+        Assert-True ([int]$actions.Count -eq 1 -and [int]$action.Type -eq $TASK_ACTION_EXEC) ('{0} has exactly one Exec action' -f $Name)
+        Assert-True ([string]$action.Arguments -eq '127.0.0.1 -n 6') ('{0} arguments preserved as-is' -f $Name)
+        Assert-True ([string]$action.WorkingDirectory -eq [Environment]::GetFolderPath('LocalApplicationData')) ('{0} working directory preserved as-is' -f $Name)
     }
     finally {
         Release-ComObject $action
@@ -249,17 +249,17 @@ function Verify-TestTask {
 }
 
 try {
-    Write-Host ('测试用户：{0} ({1})' -f $identity.Name, $currentSid)
-    Write-Host ('唯一测试前缀：{0}' -f $uniquePrefix)
+    Write-Host ('Test user: {0} ({1})' -f $identity.Name, $currentSid)
+    Write-Host ('Unique test prefix: {0}' -f $uniquePrefix)
 
     $service = New-Object -ComObject 'Schedule.Service'
     $service.Connect()
     $root = $service.GetFolder('\')
-    Assert-True ([bool]$service.Connected) 'Task Scheduler COM 服务连接成功'
+    Assert-True ([bool]$service.Connected) 'Task Scheduler COM service connected'
 
-    $logonName = $uniquePrefix + '.登录'
-    $onceName = $uniquePrefix + '.单次'
-    $dailyName = $uniquePrefix + '.每日'
+    $logonName = $uniquePrefix + '.Logon'
+    $onceName = $uniquePrefix + '.Once'
+    $dailyName = $uniquePrefix + '.Daily'
 
     Register-TestTask -Name $logonName -Kind Logon
     Register-TestTask -Name $onceName -Kind Once
@@ -274,14 +274,14 @@ try {
     try {
         $controlTask = $root.GetTask($onceName)
         $controlTask.Enabled = $false
-        Assert-True (-not [bool]$controlTask.Enabled) '唯一测试任务可以禁用'
+        Assert-True (-not [bool]$controlTask.Enabled) 'Unique test task can be disabled'
         $controlTask.Enabled = $true
-        Assert-True ([bool]$controlTask.Enabled) '唯一测试任务可以启用'
+        Assert-True ([bool]$controlTask.Enabled) 'Unique test task can be enabled'
         $running = $controlTask.Run($null)
         Start-Sleep -Milliseconds 400
-        Assert-True ($null -ne $running) '唯一测试任务可以立即运行'
+        Assert-True ($null -ne $running) 'Unique test task can run immediately'
         $controlTask.Stop(0)
-        Assert-True $true '唯一测试任务可以停止'
+        Assert-True $true 'Unique test task can be stopped'
     }
     finally {
         Release-ComObject $running
@@ -290,7 +290,7 @@ try {
 
     # Exercise the actual embedded background runner and registration functions
     # from UserTaskManager.ps1. Only one additional GUID-named task is touched.
-    $backgroundName = $uniquePrefix + '.后台'
+    $backgroundName = $uniquePrefix + '.Background'
     $backgroundFullPath = '\' + $backgroundName
     $backgroundFolder = $null
     $backgroundTask = $null
@@ -311,7 +311,7 @@ try {
             [ref]$sourceTokens,
             [ref]$sourceErrors
         )
-        Assert-True ($sourceErrors.Count -eq 0) '主应用通过 PowerShell 语法解析'
+        Assert-True ($sourceErrors.Count -eq 0) 'Main app passes PowerShell syntax parsing'
         $functionAsts = @($sourceAst.FindAll({
             param($node)
             $node -is [Management.Automation.Language.FunctionDefinitionAst]
@@ -319,30 +319,30 @@ try {
         $deleteDialogAst = $functionAsts | Where-Object Name -eq 'Show-DeleteTaskDialog' | Select-Object -First 1
         $taskEditorAst = $functionAsts | Where-Object Name -eq 'Show-TaskEditor' | Select-Object -First 1
         Assert-True ($null -ne $deleteDialogAst -and
-            $deleteDialogAst.Extent.Text -notmatch 'browseLogDirectoryButton|logDirectoryBox') '删除确认窗口不引用任务编辑器的日志控件'
+            $deleteDialogAst.Extent.Text -notmatch 'browseLogDirectoryButton|logDirectoryBox') 'Delete dialog does not reference task editor log controls'
         Assert-True ($null -ne $taskEditorAst -and
-            $taskEditorAst.Extent.Text -match 'browseLogDirectoryButton\.Add_Click') '日志目录浏览事件绑定在任务编辑器中'
+            $taskEditorAst.Extent.Text -match 'browseLogDirectoryButton\.Add_Click') 'Log directory browse event bound in task editor'
 
         $sourceText = [IO.File]::ReadAllText($mainScriptPath, [Text.Encoding]::UTF8)
         Assert-True ([Text.RegularExpressions.Regex]::Matches(
             $sourceText,
             [Text.RegularExpressions.Regex]::Escape('__USER_TASK_MANAGER_ICON_BASE64__')
-        ).Count -eq 1) '主脚本包含唯一的构建时图标注入标记'
+        ).Count -eq 1) 'Main script contains single build-time icon injection marker'
         $iconBuildOutput = Join-Path $env:TEMP ('UserTaskManager.Test.{0}.cmd' -f ([Guid]::NewGuid().ToString('N')))
         & (Join-Path $PSScriptRoot 'build.ps1') -OutputPath $iconBuildOutput
-        Assert-True ([IO.File]::Exists($iconBuildOutput)) '构建器生成临时 CMD'
+        Assert-True ([IO.File]::Exists($iconBuildOutput)) 'Builder generates temporary CMD'
         $builtBytes = [IO.File]::ReadAllBytes($iconBuildOutput)
-        Assert-True (-not ($builtBytes[0] -eq 0xEF -and $builtBytes[1] -eq 0xBB -and $builtBytes[2] -eq 0xBF)) '图标构建产物保持 UTF-8 无 BOM'
+        Assert-True (-not ($builtBytes[0] -eq 0xEF -and $builtBytes[1] -eq 0xBB -and $builtBytes[2] -eq 0xBF)) 'Icon build artifact remains UTF-8 without BOM'
         $builtText = [IO.File]::ReadAllText($iconBuildOutput, (New-Object Text.UTF8Encoding($false)))
-        Assert-True (-not $builtText.Contains('__USER_TASK_MANAGER_ICON_BASE64__')) 'SVG 渲染所得 ICO Base64 已注入构建产物'
+        Assert-True (-not $builtText.Contains('__USER_TASK_MANAGER_ICON_BASE64__')) 'SVG-rendered ICO Base64 injected into build artifact'
         $builtSmokeOutput = @(& $env:ComSpec /d /c $iconBuildOutput -SmokeTest 2>&1)
-        Assert-True ($LASTEXITCODE -eq 0 -and ($builtSmokeOutput -join "`n") -match 'SMOKE OK:.*Icon=True') '构建产物成功加载自定义 WPF 图标'
+        Assert-True ($LASTEXITCODE -eq 0 -and ($builtSmokeOutput -join "`n") -match 'SMOKE OK:.*Icon=True') 'Build artifact successfully loads custom WPF icon'
         $assetDirectory = Join-Path $PSScriptRoot 'assets'
         $generatedImageFiles = @(
             Get-ChildItem -LiteralPath $assetDirectory -File -ErrorAction Stop |
                 Where-Object { $_.Extension -in @('.png', '.ico') }
         )
-        Assert-True ($generatedImageFiles.Count -eq 0) 'SVG 构建没有在仓库保留 PNG 或 ICO 中间文件'
+        Assert-True ($generatedImageFiles.Count -eq 0) 'SVG build leaves no PNG or ICO intermediate files in repo'
 
         $enabledMenuModel = [PSCustomObject]@{ Enabled = $true }
         Update-TaskContextMenu -TaskModel $enabledMenuModel
@@ -353,7 +353,7 @@ try {
             $script:TaskContextEnableItem.Visibility -eq [Windows.Visibility]::Collapsed -and
             $script:TaskContextExportItem.Visibility -eq [Windows.Visibility]::Visible -and
             $script:TaskContextDeleteItem.Visibility -eq [Windows.Visibility]::Visible
-        ) '启用任务的右键菜单显示运行、结束、禁用、导出和删除'
+        ) 'Enabled task context menu shows Run, Stop, Disable, Export, Delete'
 
         $disabledMenuModel = [PSCustomObject]@{ Enabled = $false }
         Update-TaskContextMenu -TaskModel $disabledMenuModel
@@ -364,27 +364,27 @@ try {
             $script:TaskContextEnableItem.Visibility -eq [Windows.Visibility]::Visible -and
             $script:TaskContextExportItem.Visibility -eq [Windows.Visibility]::Visible -and
             $script:TaskContextDeleteItem.Visibility -eq [Windows.Visibility]::Visible
-        ) '禁用任务的右键菜单仅显示启用、导出和删除'
+        ) 'Disabled task context menu shows only Enable, Export, Delete'
 
         $sameLeafA = Get-BackgroundRuntimeDirectory ('\FolderA\' + $backgroundName)
         $sameLeafB = Get-BackgroundRuntimeDirectory ('\FolderB\' + $backgroundName)
-        Assert-True (-not [string]::Equals($sameLeafA, $sameLeafB, [StringComparison]::OrdinalIgnoreCase)) '不同文件夹中的同名任务使用不同后台运行目录'
-        Assert-True ([IO.Path]::GetFileName($sameLeafA) -match '^[0-9a-f]{64}$') '后台运行目录使用完整任务路径的 SHA-256 标识'
+        Assert-True (-not [string]::Equals($sameLeafA, $sameLeafB, [StringComparison]::OrdinalIgnoreCase)) 'Same-named tasks in different folders use different runtime directories'
+        Assert-True ([IO.Path]::GetFileName($sameLeafA) -match '^[0-9a-f]{64}$') 'Runtime directory uses SHA-256 of full task path'
         $defaultValues = Get-BackgroundActionValues $backgroundFullPath
         $defaultLog = Resolve-BackgroundLogDirectory -RequestedPath '' -DefaultPath $defaultValues.DefaultLogDirectory
-        Assert-True ($defaultLog.IsDefault -and [string]::Equals($defaultLog.Path, [IO.Path]::GetFullPath($defaultValues.DefaultLogDirectory), [StringComparison]::OrdinalIgnoreCase)) '留空日志路径会解析到任务专属默认 logs 目录'
+        Assert-True ($defaultLog.IsDefault -and [string]::Equals($defaultLog.Path, [IO.Path]::GetFullPath($defaultValues.DefaultLogDirectory), [StringComparison]::OrdinalIgnoreCase)) 'Empty log path resolves to task-specific default logs directory'
 
         $backgroundData = [PSCustomObject]@{
             TaskPath = '\'
             TaskName = $backgroundName
-            Description = 'UserTaskManager 后台应用安全测试'
+            Description = 'UserTaskManager background app safety test'
             Enabled = $true
             Program = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
             Arguments = '-NoLogo -NoProfile -NonInteractive -Command "Write-Output ''user-task-manager-background-ok''; $child = [Diagnostics.Process]::Start(($env:SystemRoot + ''\System32\PING.EXE''), ''127.0.0.1 -t''); $child.WaitForExit()"'
             WorkingDirectory = [Environment]::GetFolderPath('LocalApplicationData')
             BackgroundMode = $true
             LogDirectory = $backgroundCustomLogDirectory
-            TriggerKind = '单次'
+            TriggerKind = 'Once'
             StartDateTime = (Get-Date).AddHours(1)
             RepeatMinutes = 0
             Overwrite = $false
@@ -393,9 +393,9 @@ try {
         $backgroundRegistered = $true
 
         $editData = Get-TaskEditData -FullPath $backgroundFullPath
-        Assert-True ($editData.Supported -and $editData.BackgroundMode) '后台测试任务可由编辑器无损识别'
-        Assert-True ($editData.Program -eq $backgroundData.Program) '后台测试任务保留真实 executable 字段'
-        Assert-True ([string]::Equals($editData.LogDirectory, [IO.Path]::GetFullPath($backgroundCustomLogDirectory), [StringComparison]::OrdinalIgnoreCase)) '编辑器回显自定义日志目录'
+        Assert-True ($editData.Supported -and $editData.BackgroundMode) 'Background test task recognized losslessly by editor'
+        Assert-True ($editData.Program -eq $backgroundData.Program) 'Background test task preserves real executable field'
+        Assert-True ([string]::Equals($editData.LogDirectory, [IO.Path]::GetFullPath($backgroundCustomLogDirectory), [StringComparison]::OrdinalIgnoreCase)) 'Editor echoes custom log directory'
 
         Connect-TaskService
         $backgroundFolder = $script:TaskService.GetFolder('\')
@@ -411,15 +411,15 @@ try {
             $backgroundSettings = $backgroundDefinition.Settings
             $backgroundRuntime = Get-BackgroundRuntimeInfo -FullTaskPath $backgroundFullPath -Action $backgroundAction
             $expectedWrapperPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-            Assert-True ($null -ne $backgroundRuntime) '后台测试任务被正确识别为后台应用'
-            Assert-True ([string]::Equals([string]$backgroundAction.Path, $expectedWrapperPowerShell, [StringComparison]::OrdinalIgnoreCase)) 'Task Scheduler 直接跟踪系统 Windows PowerShell'
-            Assert-True ([string]$backgroundAction.Arguments -match '^-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File ') '包装器 action 使用隐藏且非交互的 PowerShell 参数'
-            Assert-True ([string]::Equals([string]$backgroundAction.WorkingDirectory, $backgroundRuntime.RuntimeDirectory, [StringComparison]::OrdinalIgnoreCase)) '包装器 action 使用任务专属运行目录'
-            Assert-True ([int]$backgroundRuntime.Config.Version -eq 1) '后台配置版本为 1'
-            Assert-True (-not [bool]$backgroundRuntime.LogDirectoryIsDefault) '后台测试任务识别为自定义日志目录'
-            Assert-True ([string]::Equals($backgroundRuntime.LogDirectory, [IO.Path]::GetFullPath($backgroundCustomLogDirectory), [StringComparison]::OrdinalIgnoreCase)) '后台任务日志写入规范化的自定义目录'
-            Assert-True ([string]$backgroundSettings.ExecutionTimeLimit -eq 'PT0S') '后台测试任务没有 72 小时执行上限'
-            Assert-True ([int]$backgroundSettings.MultipleInstances -eq 2) '后台测试任务使用 IgnoreNew 多实例策略'
+            Assert-True ($null -ne $backgroundRuntime) 'Background test task correctly identified as background app'
+            Assert-True ([string]::Equals([string]$backgroundAction.Path, $expectedWrapperPowerShell, [StringComparison]::OrdinalIgnoreCase)) 'Task Scheduler tracks system Windows PowerShell directly'
+            Assert-True ([string]$backgroundAction.Arguments -match '^-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File ') 'Wrapper action uses hidden non-interactive PowerShell parameters'
+            Assert-True ([string]::Equals([string]$backgroundAction.WorkingDirectory, $backgroundRuntime.RuntimeDirectory, [StringComparison]::OrdinalIgnoreCase)) 'Wrapper action uses task-specific runtime directory'
+            Assert-True ([int]$backgroundRuntime.Config.Version -eq 1) 'Background config version is 1'
+            Assert-True (-not [bool]$backgroundRuntime.LogDirectoryIsDefault) 'Background test task recognized as custom log directory'
+            Assert-True ([string]::Equals($backgroundRuntime.LogDirectory, [IO.Path]::GetFullPath($backgroundCustomLogDirectory), [StringComparison]::OrdinalIgnoreCase)) 'Background task log written to normalized custom directory'
+            Assert-True ([string]$backgroundSettings.ExecutionTimeLimit -eq 'PT0S') 'Background test task has no 72-hour execution limit'
+            Assert-True ([int]$backgroundSettings.MultipleInstances -eq 2) 'Background test task uses IgnoreNew multi-instance policy'
         }
         finally {
             Release-ComObject $backgroundSettings
@@ -437,7 +437,7 @@ try {
                 $capturedOutput = Read-SharedLogText $backgroundRuntime.StdOutPath
             }
         } while ($capturedOutput -notmatch 'user-task-manager-background-ok' -and (Get-Date) -lt $deadline)
-        Assert-True ($capturedOutput -match 'user-task-manager-background-ok') '后台测试任务写入 stdout.log'
+        Assert-True ($capturedOutput -match 'user-task-manager-background-ok') 'Background test task writes to stdout.log'
         [IO.File]::WriteAllText($backgroundLogSentinel, 'must-not-delete', [Text.Encoding]::UTF8)
 
         $wrapperEngineProcessId = [int]$backgroundRunning.EnginePID
@@ -447,10 +447,10 @@ try {
             $descendants = @(Get-DescendantProcessRows -RootProcessId $wrapperEngineProcessId)
         } while (($descendants.Count -lt 2 -or @($descendants | Where-Object Name -eq 'PING.EXE').Count -eq 0) -and
             (Get-Date) -lt $deadline)
-        Assert-True ($descendants.Count -ge 2) '后台包装器启动目标进程及其子进程'
-        Assert-True (@($descendants | Where-Object Name -eq 'PING.EXE').Count -eq 1) '后台测试进程树包含长时间运行的孙进程'
+        Assert-True ($descendants.Count -ge 2) 'Background wrapper launches target process and its child'
+        Assert-True (@($descendants | Where-Object Name -eq 'PING.EXE').Count -eq 1) 'Background test process tree contains long-running grandchild'
         $wrapperProcess = Get-Process -Id $wrapperEngineProcessId -ErrorAction Stop
-        Assert-True ([IntPtr]$wrapperProcess.MainWindowHandle -eq [IntPtr]::Zero) 'Task Scheduler 直接启动的 PowerShell 包装器没有可见主窗口'
+        Assert-True ([IntPtr]$wrapperProcess.MainWindowHandle -eq [IntPtr]::Zero) 'Task Scheduler-launched PowerShell wrapper has no visible main window'
         $backgroundProcessIds = @($wrapperEngineProcessId) + @($descendants | ForEach-Object { [int]$_.ProcessId })
 
         $backgroundTask.Stop(0)
@@ -462,8 +462,8 @@ try {
                 $backgroundProcessIds -contains [int]$_.ProcessId
             })
         } while ($remainingProcesses.Count -gt 0 -and (Get-Date) -lt $stopDeadline)
-        Assert-True ($remainingProcesses.Count -eq 0) '停止任务会通过 Job Object 终止包装器、目标进程和孙进程'
-        Assert-True ([int]$backgroundTask.State -ne 4) '停止后 Task Scheduler 不再报告运行实例'
+        Assert-True ($remainingProcesses.Count -eq 0) 'Stop terminates wrapper, target, and grandchild via Job Object'
+        Assert-True ([int]$backgroundTask.State -ne 4) 'Task Scheduler reports no running instance after stop'
     }
     finally {
         if ($null -ne $backgroundTask) {
@@ -481,7 +481,7 @@ try {
             }
             catch {
                 if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {
-                    Write-Warning ('清理后台测试进程失败：PID {0}；{1}' -f $processId, $_.Exception.Message)
+                    Write-Warning ('Failed to clean up background test process: PID {0}; {1}' -f $processId, $_.Exception.Message)
                 }
             }
         }
@@ -490,27 +490,27 @@ try {
         if ($backgroundRegistered -and $null -ne $backgroundFolder) {
             try {
                 $backgroundFolder.DeleteTask($backgroundName, 0)
-                Write-Host ('已清理后台测试任务：{0}' -f $backgroundFullPath)
+                Write-Host ('Cleaned up background test task: {0}' -f $backgroundFullPath)
             }
             catch {
-                Write-Warning ('清理后台测试任务失败：{0}；{1}' -f $backgroundFullPath, $_.Exception.Message)
+                Write-Warning ('Failed to clean up background test task: {0}; {1}' -f $backgroundFullPath, $_.Exception.Message)
             }
         }
         Release-ComObject $backgroundFolder
         if ($null -ne $backgroundRuntime) {
             try {
                 Remove-BackgroundRuntimeFiles -RuntimeInfo $backgroundRuntime -DeleteLogs $true
-                Write-Host ('已清理后台测试文件：{0}' -f $backgroundRuntime.RuntimeDirectory)
+                Write-Host ('Cleaned up background test files: {0}' -f $backgroundRuntime.RuntimeDirectory)
             }
             catch {
-                Write-Warning ('清理后台测试文件失败：{0}' -f $_.Exception.Message)
+                Write-Warning ('Failed to clean up background test files: {0}' -f $_.Exception.Message)
             }
         }
         Release-ComObject $script:TaskService
         $script:TaskService = $null
     }
 
-    Assert-True ([IO.File]::Exists($backgroundLogSentinel)) '清理自定义日志时保留目录中的非任务文件'
+    Assert-True ([IO.File]::Exists($backgroundLogSentinel)) 'Non-task files preserved in custom log directory during cleanup'
     [IO.File]::Delete($backgroundLogSentinel)
     if ([IO.Directory]::Exists($backgroundCustomLogDirectory) -and
         [IO.Directory]::GetFileSystemEntries($backgroundCustomLogDirectory).Count -eq 0) {
@@ -518,13 +518,13 @@ try {
     }
 
     Write-Host ''
-    Write-Host '全部测试通过：' -ForegroundColor Green
+    Write-Host 'All tests passed:' -ForegroundColor Green
     $results | ForEach-Object { Write-Host ('  {0}' -f $_) }
 }
 catch {
     $unsigned = $_.Exception.HResult -band 0xFFFFFFFF
-    if ($unsigned -eq 0x80070005 -or $_.Exception.Message -match 'Access.*denied|拒绝访问') {
-        Write-Error 'Access denied（拒绝访问）：当前用户不能在根目录创建安全测试任务；未请求提升。'
+    if ($unsigned -eq 0x80070005 -or $_.Exception.Message -match 'Access.*denied') {
+        Write-Error 'Access denied: current user cannot create safety test tasks in root folder; elevation not requested.'
     }
     else {
         Write-Error $_
@@ -541,17 +541,17 @@ finally {
             }
         }
         catch {
-            Write-Warning ('清理临时图标构建产物失败：{0}；{1}' -f $iconBuildOutput, $_.Exception.Message)
+            Write-Warning ('Failed to clean up temp icon build artifact: {0}; {1}' -f $iconBuildOutput, $_.Exception.Message)
         }
     }
     if ($null -ne $root) {
         foreach ($name in @($createdNames)) {
             try {
                 $root.DeleteTask($name, 0)
-                Write-Host ('已清理测试任务：\{0}' -f $name)
+                Write-Host ('Cleaned up test task: \{0}' -f $name)
             }
             catch {
-                Write-Warning ('清理测试任务失败：\{0}；{1}' -f $name, $_.Exception.Message)
+                Write-Warning ('Failed to clean up test task: \{0}; {1}' -f $name, $_.Exception.Message)
             }
         }
     }
@@ -572,7 +572,7 @@ finally {
             }
         }
         catch {
-            Write-Warning ('清理唯一测试日志目录失败：{0}；{1}' -f $backgroundCustomLogDirectory, $_.Exception.Message)
+            Write-Warning ('Failed to clean up unique test log directory: {0}; {1}' -f $backgroundCustomLogDirectory, $_.Exception.Message)
         }
     }
     [GC]::Collect()
