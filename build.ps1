@@ -7,9 +7,6 @@
 [CmdletBinding()]
 param(
     [Parameter()]
-    [string]$SourcePath,
-
-    [Parameter()]
     [string]$OutputPath,
 
     [Parameter()]
@@ -20,9 +17,6 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $scriptDirectory = [IO.Path]::GetDirectoryName($MyInvocation.MyCommand.Path)
-if ([string]::IsNullOrWhiteSpace($SourcePath)) {
-    $SourcePath = Join-Path $scriptDirectory 'UserTaskManager.ps1'
-}
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
     $OutputPath = Join-Path $scriptDirectory 'UserTaskManager.cmd'
 }
@@ -41,23 +35,15 @@ function Get-FullPath {
     return [IO.Path]::GetFullPath((Join-Path (Get-Location).Path $Path))
 }
 
-$sourceFullPath = Get-FullPath $SourcePath
 $outputFullPath = Get-FullPath $OutputPath
 $iconFullPath = Get-FullPath $IconPath
 
-if (-not [IO.File]::Exists($sourceFullPath)) {
-    throw ('找不到源脚本：{0}' -f $sourceFullPath)
-}
 if (-not [IO.File]::Exists($iconFullPath)) {
     throw ('找不到 SVG 图标母版：{0}' -f $iconFullPath)
 }
 if ([IO.Path]::GetExtension($outputFullPath) -ine '.cmd') {
     throw ('输出文件必须使用 .cmd 扩展名：{0}' -f $outputFullPath)
 }
-if ([string]::Equals($sourceFullPath, $outputFullPath, [StringComparison]::OrdinalIgnoreCase)) {
-    throw '源脚本和输出文件不能是同一个文件。'
-}
-
 Add-Type -AssemblyName PresentationCore, WindowsBase
 
 function Get-SvgAttribute {
@@ -285,10 +271,29 @@ function Convert-SvgToIconBase64 {
     }
 }
 
+$sourceFiles = @(
+    'UserTaskManager.ps1',
+    'WrapperContent.ps1',
+    'Utilities.ps1',
+    'Background.ps1',
+    'TaskManager.ps1',
+    'Dialogs.ps1'
+)
+$srcDirectory = Join-Path $scriptDirectory 'src'
+$sourceTextBuilder = New-Object Text.StringBuilder
+foreach ($file in $sourceFiles) {
+    $fullPath = Join-Path $srcDirectory $file
+    if (-not [IO.File]::Exists($fullPath)) {
+        throw ('找不到源文件：{0}' -f $fullPath)
+    }
+    [void]$sourceTextBuilder.Append([IO.File]::ReadAllText($fullPath, [Text.Encoding]::UTF8))
+}
+$sourceText = $sourceTextBuilder.ToString()
+
 $tokens = $null
 $parseErrors = $null
-[void][Management.Automation.Language.Parser]::ParseFile(
-    $sourceFullPath,
+[void][Management.Automation.Language.Parser]::ParseInput(
+    $sourceText,
     [ref]$tokens,
     [ref]$parseErrors
 )
@@ -298,8 +303,6 @@ if ($parseErrors.Count -gt 0) {
     }
     throw ("源脚本语法检查失败：`n{0}" -f ($details -join [Environment]::NewLine))
 }
-
-$sourceText = [IO.File]::ReadAllText($sourceFullPath, [Text.Encoding]::UTF8)
 $iconMarker = '__USER_TASK_MANAGER_ICON_BASE64__'
 $markerCount = [Text.RegularExpressions.Regex]::Matches(
     $sourceText,
