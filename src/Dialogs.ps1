@@ -139,6 +139,7 @@ function Show-TaskEditor {
     $addEnvVarButton = $window.FindName('AddEnvVarButton')
 
     $script:__envVarRows = New-Object 'System.Collections.Generic.List[object]'
+    $script:__envVarsPanel = $envVarsPanel
 
     function New-EnvVarRow {
         $row = New-Object Windows.Controls.Grid
@@ -178,15 +179,17 @@ function Show-TaskEditor {
         $removeButton.Height = 22
         $removeButton.Margin = [Windows.Thickness]::new(4, 2, 0, 2)
         $removeButton.FontSize = 11
+        $removeButton.Tag = $row
         [Windows.Controls.Grid]::SetColumn($removeButton, 3)
         $removeButton.Add_Click({
-            [void]$envVarsPanel.Children.Remove($row)
-            [void]$script:__envVarRows.Remove($row)
+            $currentRow = $this.Tag
+            [void]$script:__envVarsPanel.Children.Remove($currentRow)
+            [void]$script:__envVarRows.Remove($currentRow)
         })
         [void]$row.Children.Add($removeButton)
 
         $row.Margin = [Windows.Thickness]::new(0, 0, 0, 2)
-        [void]$envVarsPanel.Children.Add($row)
+        [void]$script:__envVarsPanel.Children.Add($row)
         [void]$script:__envVarRows.Add($row)
         return @{ NameBox = $nameBox; ValueBox = $valueBox }
     }
