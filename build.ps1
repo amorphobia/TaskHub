@@ -112,7 +112,7 @@ function New-SvgPen {
     return $pen
 }
 
-function Draw-SvgElement {
+function Write-SvgElement {
     param(
         [Parameter(Mandatory = $true)][Xml.XmlElement]$Element,
         [Parameter(Mandatory = $true)][Windows.Media.DrawingContext]$DrawingContext
@@ -196,7 +196,7 @@ function Convert-SvgToPngBytes {
         $drawingContext.PushTransform((New-Object Windows.Media.TranslateTransform(-$viewX, -$viewY)))
         foreach ($child in $root.ChildNodes) {
             if ($child -is [Xml.XmlElement]) {
-                Draw-SvgElement -Element $child -DrawingContext $drawingContext
+                Write-SvgElement -Element $child -DrawingContext $drawingContext
             }
         }
         $drawingContext.Pop()

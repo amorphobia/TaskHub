@@ -17,7 +17,7 @@ function Write-AppLog {
     }
 }
 
-function Release-ComObject {
+function Clear-ComObject {
     param([object]$InputObject)
     if ($null -ne $InputObject -and [Runtime.InteropServices.Marshal]::IsComObject($InputObject)) {
         try {
@@ -128,7 +128,7 @@ function Connect-TaskService {
             }
         }
         catch {
-            Release-ComObject $script:TaskService
+            Clear-ComObject $script:TaskService
             $script:TaskService = $null
         }
     }
@@ -141,13 +141,13 @@ function Connect-TaskService {
     catch {
         $message = Get-FriendlyError -ErrorRecord $_ -Context '连接 Task Scheduler'
         Write-AppLog -Level ERROR -Message $message
-        Release-ComObject $script:TaskService
+        Clear-ComObject $script:TaskService
         $script:TaskService = $null
         throw $message
     }
 }
 
-function Normalize-FolderPath {
+function Resolve-FolderPath {
     param([AllowEmptyString()][string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) {
         return '\'
@@ -170,7 +170,7 @@ function Join-TaskFullPath {
         [Parameter(Mandatory = $true)][string]$FolderPath,
         [Parameter(Mandatory = $true)][string]$TaskName
     )
-    $normalized = Normalize-FolderPath $FolderPath
+    $normalized = Resolve-FolderPath $FolderPath
     if ($normalized -eq '\') {
         return '\' + $TaskName
     }
@@ -197,7 +197,7 @@ function Test-TaskName {
 function Test-FolderPath {
     param([string]$Path)
     try {
-        $normalized = Normalize-FolderPath $Path
+        $normalized = Resolve-FolderPath $Path
         if ($normalized.IndexOf([char]0) -ge 0) {
             return 'TaskPath 包含无效字符。'
         }
@@ -219,7 +219,7 @@ function Get-NormalizedTaskFullPath {
     $parts = Split-RegisteredTaskPath $FullTaskPath
     $nameError = Test-TaskName $parts.Name
     if ($null -ne $nameError) { throw $nameError }
-    return Join-TaskFullPath (Normalize-FolderPath $parts.Folder) $parts.Name
+    return Join-TaskFullPath (Resolve-FolderPath $parts.Folder) $parts.Name
 }
 
 function Get-TaskPathHash {

@@ -81,18 +81,18 @@ function Get-TriggerSummary {
                 $summaries.Add('无法读取的触发器')
             }
             finally {
-                Release-ComObject $trigger
+                Clear-ComObject $trigger
             }
         }
     }
     finally {
-        Release-ComObject $triggers
+        Clear-ComObject $triggers
     }
     if ($summaries.Count -eq 0) { return '无触发器' }
     return ($summaries -join '；')
 }
 
-function Quote-SummaryArgument {
+function Format-SummaryArgument {
     param([string]$Value)
     if ([string]::IsNullOrEmpty($Value)) { return '' }
     if ($Value -match '\s') { return '"{0}"' -f $Value }
@@ -108,7 +108,7 @@ function Get-ActionSummary {
         foreach ($action in @($actions)) {
             try {
                 if ([int]$action.Type -eq $script:TASK_ACTION_EXEC) {
-                    $summary = Quote-SummaryArgument ([string]$action.Path)
+                    $summary = Format-SummaryArgument ([string]$action.Path)
                     if (-not [string]::IsNullOrWhiteSpace([string]$action.Arguments)) {
                         $summary += ' ' + [string]$action.Arguments
                     }
@@ -122,12 +122,12 @@ function Get-ActionSummary {
                 $summaries.Add('无法读取的操作')
             }
             finally {
-                Release-ComObject $action
+                Clear-ComObject $action
             }
         }
     }
     finally {
-        Release-ComObject $actions
+        Clear-ComObject $actions
     }
     if ($summaries.Count -eq 0) { return '无操作' }
     return ($summaries -join '；')
@@ -146,7 +146,7 @@ function Get-DisplayActionSummary {
             $action = $actions.Item(1)
             $runtimeInfo = Get-BackgroundRuntimeInfo -FullTaskPath $FullTaskPath -Action $action
             if ($null -ne $runtimeInfo) {
-                $summary = '后台应用：' + (Quote-SummaryArgument ([string]$runtimeInfo.Config.Executable))
+                $summary = '后台应用：' + (Format-SummaryArgument ([string]$runtimeInfo.Config.Executable))
                 if (-not [string]::IsNullOrWhiteSpace([string]$runtimeInfo.Config.Arguments)) {
                     $summary += ' ' + [string]$runtimeInfo.Config.Arguments
                 }
@@ -155,8 +155,8 @@ function Get-DisplayActionSummary {
         }
     }
     finally {
-        Release-ComObject $action
-        Release-ComObject $actions
+        Clear-ComObject $action
+        Clear-ComObject $actions
     }
     return Get-ActionSummary $Definition
 }
@@ -184,8 +184,8 @@ function Convert-RegisteredTaskToModel {
         }
     }
     finally {
-        Release-ComObject $principal
-        Release-ComObject $definition
+        Clear-ComObject $principal
+        Clear-ComObject $definition
     }
 }
 
@@ -211,13 +211,13 @@ function Get-FolderTaskModels {
                 Write-AppLog -Level WARN -Message $message
             }
             finally {
-                Release-ComObject $task
+                Clear-ComObject $task
             }
         }
     }
     finally {
-        Release-ComObject $tasks
-        Release-ComObject $folder
+        Clear-ComObject $tasks
+        Clear-ComObject $folder
     }
     return $models
 }
@@ -248,7 +248,7 @@ function Add-FolderTreeNodes {
                 Write-AppLog -Level WARN -Message $message
             }
             finally {
-                Release-ComObject $child
+                Clear-ComObject $child
             }
         }
     }
@@ -259,7 +259,7 @@ function Add-FolderTreeNodes {
         Write-AppLog -Level WARN -Message $message
     }
     finally {
-        Release-ComObject $children
+        Clear-ComObject $children
     }
 }
 
@@ -282,7 +282,7 @@ function Find-TreeNodeByPath {
     return $null
 }
 
-function Refresh-FolderTree {
+function Update-FolderTree {
     $previous = $script:CurrentFolderPath
     $script:FolderTree.Items.Clear()
     $script:FolderPaths.Clear()
@@ -307,7 +307,7 @@ function Refresh-FolderTree {
         $target.BringIntoView()
     }
     finally {
-        Release-ComObject $rootFolder
+        Clear-ComObject $rootFolder
     }
     return $errors
 }
@@ -339,12 +339,12 @@ $($task.Description)
 "@
 }
 
-function Refresh-TaskList {
+function Update-TaskList {
     param([string]$FolderPath)
     if ($script:IsBusy) { return }
     Set-Busy -Busy $true -Status ('正在读取 {0} ...' -f $FolderPath)
     try {
-        $script:CurrentFolderPath = Normalize-FolderPath $FolderPath
+        $script:CurrentFolderPath = Resolve-FolderPath $FolderPath
         $models = @(Get-FolderTaskModels -FolderPath $script:CurrentFolderPath)
         $script:TaskGrid.ItemsSource = $models
         Update-TaskDetails
@@ -365,11 +365,11 @@ function Refresh-TaskList {
     }
 }
 
-function Refresh-All {
+function Update-All {
     if ($script:IsBusy) { return }
     Set-Busy -Busy $true -Status '正在刷新任务文件夹...'
     try {
-        $errors = @(Refresh-FolderTree)
+        $errors = @(Update-FolderTree)
         $path = $script:CurrentFolderPath
         $models = @(Get-FolderTaskModels -FolderPath $path)
         $script:TaskGrid.ItemsSource = $models
@@ -442,8 +442,8 @@ function Invoke-WithSelectedTask {
         Set-Status -Text $message
     }
     finally {
-        Release-ComObject $task
-        Release-ComObject $folder
+        Clear-ComObject $task
+        Clear-ComObject $folder
         Set-Busy -Busy $false
     }
 }
@@ -460,8 +460,8 @@ function Get-RegisteredTaskXml {
         return [string]$task.Xml
     }
     finally {
-        Release-ComObject $task
-        Release-ComObject $folder
+        Clear-ComObject $task
+        Clear-ComObject $folder
     }
 }
 
@@ -484,11 +484,11 @@ function Get-RegisteredTaskBackgroundInfo {
         return Get-BackgroundRuntimeInfo -FullTaskPath $FullPath -Action $action
     }
     finally {
-        Release-ComObject $action
-        Release-ComObject $actions
-        Release-ComObject $definition
-        Release-ComObject $task
-        Release-ComObject $folder
+        Clear-ComObject $action
+        Clear-ComObject $actions
+        Clear-ComObject $definition
+        Clear-ComObject $task
+        Clear-ComObject $folder
     }
 }
 
@@ -735,21 +735,21 @@ function Get-TaskEditData {
         }
     }
     finally {
-        Release-ComObject $trigger
-        Release-ComObject $action
-        Release-ComObject $principal
-        Release-ComObject $triggers
-        Release-ComObject $actions
-        Release-ComObject $definition
-        Release-ComObject $task
-        Release-ComObject $folder
+        Clear-ComObject $trigger
+        Clear-ComObject $action
+        Clear-ComObject $principal
+        Clear-ComObject $triggers
+        Clear-ComObject $actions
+        Clear-ComObject $definition
+        Clear-ComObject $task
+        Clear-ComObject $folder
     }
 }
 
-function Ensure-TaskFolder {
+function Initialize-TaskFolder {
     param([string]$FolderPath)
     Connect-TaskService
-    $normalized = Normalize-FolderPath $FolderPath
+    $normalized = Resolve-FolderPath $FolderPath
     $existing = $null
     try {
         $existing = $script:TaskService.GetFolder($normalized)
@@ -780,7 +780,7 @@ function Ensure-TaskFolder {
                     throw $message
                 }
             }
-            Release-ComObject $parent
+            Clear-ComObject $parent
             $parent = $nextFolder
             $currentPath = $nextPath
         }
@@ -789,7 +789,7 @@ function Ensure-TaskFolder {
         return $result
     }
     finally {
-        Release-ComObject $parent
+        Clear-ComObject $parent
     }
 }
 
@@ -828,7 +828,7 @@ function Register-TaskFromData {
         if ($null -ne $Data.PSObject.Properties['BackgroundMode']) {
             $backgroundMode = [bool]$Data.BackgroundMode
         }
-        $folder = Ensure-TaskFolder $Data.TaskPath
+        $folder = Initialize-TaskFolder $Data.TaskPath
         if (-not [string]::IsNullOrWhiteSpace($OriginalFullPath)) {
             $sourceParts = Split-RegisteredTaskPath $OriginalFullPath
             $sourceFolder = $script:TaskService.GetFolder($sourceParts.Folder)
@@ -842,9 +842,9 @@ function Register-TaskFromData {
                 }
             }
             finally {
-                Release-ComObject $sourceActionForRuntime
+                Clear-ComObject $sourceActionForRuntime
                 $sourceActionForRuntime = $null
-                Release-ComObject $sourceActionsForRuntime
+                Clear-ComObject $sourceActionsForRuntime
                 $sourceActionsForRuntime = $null
             }
         }
@@ -952,7 +952,7 @@ function Register-TaskFromData {
                 throw ('新任务已保存为 {0}，但{1}' -f $fullPath, $message)
             }
             finally {
-                Release-ComObject $oldFolder
+                Clear-ComObject $oldFolder
             }
         }
 
@@ -977,21 +977,21 @@ function Register-TaskFromData {
         throw
     }
     finally {
-        Release-ComObject $registeredTask
-        Release-ComObject $action
-        Release-ComObject $actions
-        Release-ComObject $repetition
-        Release-ComObject $trigger
-        Release-ComObject $triggers
-        Release-ComObject $settings
-        Release-ComObject $principal
-        Release-ComObject $registrationInfo
-        Release-ComObject $definition
-        Release-ComObject $sourceTask
-        Release-ComObject $sourceFolder
-        Release-ComObject $sourceActionForRuntime
-        Release-ComObject $sourceActionsForRuntime
-        Release-ComObject $folder
+        Clear-ComObject $registeredTask
+        Clear-ComObject $action
+        Clear-ComObject $actions
+        Clear-ComObject $repetition
+        Clear-ComObject $trigger
+        Clear-ComObject $triggers
+        Clear-ComObject $settings
+        Clear-ComObject $principal
+        Clear-ComObject $registrationInfo
+        Clear-ComObject $definition
+        Clear-ComObject $sourceTask
+        Clear-ComObject $sourceFolder
+        Clear-ComObject $sourceActionForRuntime
+        Clear-ComObject $sourceActionsForRuntime
+        Clear-ComObject $folder
     }
 }
 
@@ -1004,7 +1004,7 @@ function Test-TaskExists {
     $task = $null
     try {
         Connect-TaskService
-        $folder = $script:TaskService.GetFolder((Normalize-FolderPath $FolderPath))
+        $folder = $script:TaskService.GetFolder((Resolve-FolderPath $FolderPath))
         $task = $folder.GetTask($TaskName)
         return $true
     }
@@ -1020,8 +1020,8 @@ function Test-TaskExists {
         throw
     }
     finally {
-        Release-ComObject $task
-        Release-ComObject $folder
+        Clear-ComObject $task
+        Clear-ComObject $folder
     }
 }
 

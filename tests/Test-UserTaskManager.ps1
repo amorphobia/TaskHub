@@ -47,7 +47,7 @@ $root = $null
 $backgroundCustomLogDirectory = $null
 $iconBuildOutput = $null
 
-function Release-ComObject {
+function Clear-ComObject {
     param([object]$Value)
     if ($null -ne $Value -and [Runtime.InteropServices.Marshal]::IsComObject($Value)) {
         try { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($Value) } catch {}
@@ -171,13 +171,13 @@ function New-TestDefinition {
         return $definition
     }
     finally {
-        Release-ComObject $action
-        Release-ComObject $actions
-        Release-ComObject $trigger
-        Release-ComObject $triggers
-        Release-ComObject $settings
-        Release-ComObject $principal
-        Release-ComObject $registrationInfo
+        Clear-ComObject $action
+        Clear-ComObject $actions
+        Clear-ComObject $trigger
+        Clear-ComObject $triggers
+        Clear-ComObject $settings
+        Clear-ComObject $principal
+        Clear-ComObject $registrationInfo
         # The returned definition remains valid; the caller releases it.
     }
 }
@@ -204,12 +204,12 @@ function Register-TestTask {
         Assert-True ($task.Path -eq ('\' + $Name)) ('Created unique test task {0}' -f $Name)
     }
     finally {
-        Release-ComObject $task
-        Release-ComObject $definition
+        Clear-ComObject $task
+        Clear-ComObject $definition
     }
 }
 
-function Verify-TestTask {
+function Assert-TestTask {
     param(
         [string]$Name,
         [int]$ExpectedTriggerType
@@ -238,13 +238,13 @@ function Verify-TestTask {
         Assert-True ([string]$action.WorkingDirectory -eq [Environment]::GetFolderPath('LocalApplicationData')) ('{0} working directory preserved as-is' -f $Name)
     }
     finally {
-        Release-ComObject $action
-        Release-ComObject $actions
-        Release-ComObject $trigger
-        Release-ComObject $triggers
-        Release-ComObject $principal
-        Release-ComObject $definition
-        Release-ComObject $task
+        Clear-ComObject $action
+        Clear-ComObject $actions
+        Clear-ComObject $trigger
+        Clear-ComObject $triggers
+        Clear-ComObject $principal
+        Clear-ComObject $definition
+        Clear-ComObject $task
     }
 }
 
@@ -265,9 +265,9 @@ try {
     Register-TestTask -Name $onceName -Kind Once
     Register-TestTask -Name $dailyName -Kind Daily
 
-    Verify-TestTask -Name $logonName -ExpectedTriggerType $TASK_TRIGGER_LOGON
-    Verify-TestTask -Name $onceName -ExpectedTriggerType $TASK_TRIGGER_TIME
-    Verify-TestTask -Name $dailyName -ExpectedTriggerType $TASK_TRIGGER_DAILY
+    Assert-TestTask -Name $logonName -ExpectedTriggerType $TASK_TRIGGER_LOGON
+    Assert-TestTask -Name $onceName -ExpectedTriggerType $TASK_TRIGGER_TIME
+    Assert-TestTask -Name $dailyName -ExpectedTriggerType $TASK_TRIGGER_DAILY
 
     $controlTask = $null
     $running = $null
@@ -284,8 +284,8 @@ try {
         Assert-True $true 'Unique test task can be stopped'
     }
     finally {
-        Release-ComObject $running
-        Release-ComObject $controlTask
+        Clear-ComObject $running
+        Clear-ComObject $controlTask
     }
 
     # Exercise the actual embedded background runner and registration functions
@@ -422,10 +422,10 @@ try {
             Assert-True ([int]$backgroundSettings.MultipleInstances -eq 2) 'Background test task uses IgnoreNew multi-instance policy'
         }
         finally {
-            Release-ComObject $backgroundSettings
-            Release-ComObject $backgroundAction
-            Release-ComObject $backgroundActions
-            Release-ComObject $backgroundDefinition
+            Clear-ComObject $backgroundSettings
+            Clear-ComObject $backgroundAction
+            Clear-ComObject $backgroundActions
+            Clear-ComObject $backgroundDefinition
         }
 
         $backgroundRunning = $backgroundTask.Run($null)
@@ -485,8 +485,8 @@ try {
                 }
             }
         }
-        Release-ComObject $backgroundRunning
-        Release-ComObject $backgroundTask
+        Clear-ComObject $backgroundRunning
+        Clear-ComObject $backgroundTask
         if ($backgroundRegistered -and $null -ne $backgroundFolder) {
             try {
                 $backgroundFolder.DeleteTask($backgroundName, 0)
@@ -496,7 +496,7 @@ try {
                 Write-Warning ('Failed to clean up background test task: {0}; {1}' -f $backgroundFullPath, $_.Exception.Message)
             }
         }
-        Release-ComObject $backgroundFolder
+        Clear-ComObject $backgroundFolder
         if ($null -ne $backgroundRuntime) {
             try {
                 Remove-BackgroundRuntimeFiles -RuntimeInfo $backgroundRuntime -DeleteLogs $true
@@ -506,7 +506,7 @@ try {
                 Write-Warning ('Failed to clean up background test files: {0}' -f $_.Exception.Message)
             }
         }
-        Release-ComObject $script:TaskService
+        Clear-ComObject $script:TaskService
         $script:TaskService = $null
     }
 
@@ -555,8 +555,8 @@ finally {
             }
         }
     }
-    Release-ComObject $root
-    Release-ComObject $service
+    Clear-ComObject $root
+    Clear-ComObject $service
     if (-not [string]::IsNullOrWhiteSpace($backgroundCustomLogDirectory)) {
         try {
             $testLogRoot = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'UserTaskManager\TestLogs'))

@@ -325,7 +325,7 @@ function Show-TaskEditor {
                 throw '重复间隔至少为 1 分钟。'
             }
 
-            $normalizedPath = Normalize-FolderPath $taskPathBox.Text
+            $normalizedPath = Resolve-FolderPath $taskPathBox.Text
             $name = $taskNameBox.Text
             $fullPath = Join-TaskFullPath $normalizedPath $name
             if ([bool]$backgroundBox.IsChecked) {
@@ -623,11 +623,11 @@ $script:TaskGrid.Add_ContextMenuOpening({
     Update-TaskContextMenu -TaskModel $script:TaskGrid.SelectedItem
 })
 
-$script:RefreshButton.Add_Click({ Refresh-All })
+$script:RefreshButton.Add_Click({ Update-All })
 $script:TaskGrid.Add_SelectionChanged({ Update-TaskDetails })
 $script:FolderTree.Add_SelectedItemChanged({
     if (-not $script:IsBusy -and $null -ne $script:FolderTree.SelectedItem) {
-        Refresh-TaskList -FolderPath ([string]$script:FolderTree.SelectedItem.Tag)
+        Update-TaskList -FolderPath ([string]$script:FolderTree.SelectedItem.Tag)
     }
 })
 
@@ -635,7 +635,7 @@ $script:MainWindow.FindName('RunButton').Add_Click({
     Invoke-WithSelectedTask -OperationName '立即运行' -Operation {
         param($folder, $task, $model)
         $running = $task.Run($null)
-        Release-ComObject $running
+        Clear-ComObject $running
     }
 })
 $script:MainWindow.FindName('StopButton').Add_Click({
@@ -667,9 +667,9 @@ $script:MainWindow.FindName('DisableButton').Add_Click({
                 }
             }
             finally {
-                Release-ComObject $taskAction
-                Release-ComObject $actions
-                Release-ComObject $definition
+                Clear-ComObject $taskAction
+                Clear-ComObject $actions
+                Clear-ComObject $definition
             }
             if ($null -ne $runtimeInfo) {
                 $task.Stop(0)
@@ -704,9 +704,9 @@ $script:MainWindow.FindName('DeleteButton').Add_Click({
                 }
             }
             finally {
-                Release-ComObject $taskAction
-                Release-ComObject $actions
-                Release-ComObject $definition
+                Clear-ComObject $taskAction
+                Clear-ComObject $actions
+                Clear-ComObject $definition
             }
             $parts = Split-RegisteredTaskPath $model.Path
             $folder.DeleteTask($parts.Name, 0)
@@ -820,7 +820,7 @@ $script:MainWindow.FindName('CreateButton').Add_Click({
     }
     finally {
         Set-Busy -Busy $false
-        Refresh-All
+        Update-All
     }
 })
 
@@ -855,16 +855,16 @@ $script:MainWindow.FindName('EditButton').Add_Click({
     }
     finally {
         Set-Busy -Busy $false
-        Refresh-All
+        Update-All
     }
 })
 
 $script:MainWindow.Add_ContentRendered({
-    Refresh-All
+    Update-All
 })
 $script:MainWindow.Add_Closed({
     Write-AppLog -Message '应用已关闭。'
-    Release-ComObject $script:TaskService
+    Clear-ComObject $script:TaskService
     $script:TaskService = $null
     [GC]::Collect()
     [GC]::WaitForPendingFinalizers()
@@ -874,7 +874,7 @@ Write-AppLog -Message ('应用启动；PowerShell={0}；ApartmentState={1}' -f $
 if ($SmokeTest) {
     try {
         Connect-TaskService
-        $smokeErrors = @(Refresh-FolderTree)
+        $smokeErrors = @(Update-FolderTree)
         $smokeModels = @(Get-FolderTaskModels -FolderPath '\')
         Write-Output ('SMOKE OK: STA={0}; Folders={1}; RootTasks={2}; SkippedFolders={3}; Icon={4}' -f
             [Threading.Thread]::CurrentThread.ApartmentState,
@@ -884,7 +884,7 @@ if ($SmokeTest) {
             $script:MainIconLoaded)
     }
     finally {
-        Release-ComObject $script:TaskService
+        Clear-ComObject $script:TaskService
         $script:TaskService = $null
         [GC]::Collect()
         [GC]::WaitForPendingFinalizers()
