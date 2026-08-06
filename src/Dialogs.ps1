@@ -87,7 +87,7 @@ function Show-TaskEditor {
         </Grid>
         <TextBlock Grid.Row="15" Grid.Column="1" Margin="8,0,4,5" Foreground="#666666"
                    TextWrapping="Wrap"
-                   Text="仅用于后台应用。变量名和值均不能为空。同名变量将覆盖继承值。"/>
+                   Text="仅用于后台应用。变量名不能为空；值为空则取消该变量。同名变量将覆盖继承值。"/>
         <Separator Grid.Row="16" Grid.ColumnSpan="2" Margin="0,10"/>
         <Label Grid.Row="17" Grid.Column="0" Content="触发器"/>
         <ComboBox x:Name="TriggerKindBox" Grid.Row="17" Grid.Column="1" Margin="4" SelectedIndex="0">
