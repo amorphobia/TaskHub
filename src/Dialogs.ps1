@@ -129,6 +129,8 @@ function Show-TaskEditor {
     $script:__envVarsPanel = $envVarsPanel
     $script:__actionRows = New-Object 'System.Collections.Generic.List[object]'
     $script:__triggerRows = New-Object 'System.Collections.Generic.List[object]'
+    $script:__actionsPanel = $actionsPanel
+    $script:__triggersPanel = $triggersPanel
 
     function New-EnvVarRow {
         $row = New-Object Windows.Controls.Grid
@@ -228,14 +230,16 @@ function Show-TaskEditor {
         $execBrowseBtn.Margin = [Windows.Thickness]::new(4, 2, 2, 2)
         [Windows.Controls.Grid]::SetRow($execBrowseBtn, 1); [Windows.Controls.Grid]::SetColumn($execBrowseBtn, 2)
         [void]$grid.Children.Add($execBrowseBtn)
+        $execBrowseBtn.Tag = [PSCustomObject]@{ PathBox = $execPathBox; WdBox = $execWdBox }
         $execBrowseBtn.Add_Click({
+            $data = $this.Tag
             $dialog = New-Object Microsoft.Win32.OpenFileDialog
             $dialog.Title = '选择要运行的程序'
             $dialog.Filter = '可执行文件 (*.exe;*.com;*.bat;*.cmd)|*.exe;*.com;*.bat;*.cmd|所有文件 (*.*)|*.*'
             if ($dialog.ShowDialog($window)) {
-                $execPathBox.Text = $dialog.FileName
-                if ([string]::IsNullOrWhiteSpace($execWdBox.Text)) {
-                    $execWdBox.Text = [IO.Path]::GetDirectoryName($dialog.FileName)
+                $data.PathBox.Text = $dialog.FileName
+                if ([string]::IsNullOrWhiteSpace($data.WdBox.Text)) {
+                    $data.WdBox.Text = [IO.Path]::GetDirectoryName($dialog.FileName)
                 }
             }
         })
@@ -284,21 +288,21 @@ function Show-TaskEditor {
         [Windows.Controls.Grid]::SetRow($msgBodyBox, 2); [Windows.Controls.Grid]::SetColumn($msgBodyBox, 1)
         [void]$grid.Children.Add($msgBodyBox)
 
-        # Exec field list for toggling
-        $execFields = @($execPathLabel, $execPathBox, $execBrowseBtn, $execArgsLabel, $execArgsBox, $execWdLabel, $execWdBox)
-        $msgFields = @($msgTitleLabel, $msgTitleBox, $msgBodyLabel, $msgBodyBox)
+        # Exec field list for toggling — stored on combo for event handler access.
+        $typeCombo.Tag = [PSCustomObject]@{ ExecFields = @($execPathLabel, $execPathBox, $execBrowseBtn, $execArgsLabel, $execArgsBox, $execWdLabel, $execWdBox); MsgFields = @($msgTitleLabel, $msgTitleBox, $msgBodyLabel, $msgBodyBox) }
 
         $typeCombo.Add_SelectionChanged({
-            $isExec = $typeCombo.SelectedIndex -eq 0
-            foreach ($c in $execFields) { $c.Visibility = if ($isExec) { 'Visible' } else { 'Collapsed' } }
-            foreach ($c in $msgFields) { $c.Visibility = if ($isExec) { 'Collapsed' } else { 'Visible' } }
+            $data = $this.Tag
+            $isExec = $this.SelectedIndex -eq 0
+            foreach ($c in $data.ExecFields) { $c.Visibility = if ($isExec) { 'Visible' } else { 'Collapsed' } }
+            foreach ($c in $data.MsgFields) { $c.Visibility = if ($isExec) { 'Collapsed' } else { 'Visible' } }
         })
 
         $removeBtn.Tag = $outerBorder
         $removeBtn.Add_Click({
             $target = $this.Tag
             [void]$script:__actionRows.Remove($target)
-            [void]$actionsPanel.Children.Remove($target)
+            [void]$script:__actionsPanel.Children.Remove($target)
         })
 
         $outerBorder.Tag = $grid
@@ -481,25 +485,28 @@ function Show-TaskEditor {
         $regDelayBox.Width = 100; $regDelayBox.ToolTip = '例如 PT30S，留空表示不延迟'
         [void]$regDelayPanel.Children.Add($regDelayBox)
 
-        # Visibility groups
-        $timeBasedFields = @($dateTimePanel, $repeatPanel)
-        $weeklyFields = @($weeklyPanel)
-        $monthlyFields = @($monthlyPanel, $monthsPanel)
-        $monthlyDowFields = @($monthlyDowPanel, $monthsPanel)
-        $regFields = @($regDelayPanel)
-        $allTypeSpecific = @($weeklyPanel, $monthlyPanel, $monthsPanel, $monthlyDowPanel, $regDelayPanel)
+        # Visibility groups — stored on combo for event handler access.
+        $typeCombo.Tag = [PSCustomObject]@{
+            TimeBasedFields = @($dateTimePanel, $repeatPanel)
+            AllTypeSpecific = @($weeklyPanel, $monthlyPanel, $monthsPanel, $monthlyDowPanel, $regDelayPanel)
+            WeeklyFields = @($weeklyPanel)
+            MonthlyFields = @($monthlyPanel, $monthsPanel)
+            MonthlyDowFields = @($monthlyDowPanel, $monthsPanel)
+            RegFields = @($regDelayPanel)
+        }
 
         $typeCombo.Add_SelectionChanged({
-            $kind = [string]$typeCombo.SelectedItem.Content
+            $data = $this.Tag
+            $kind = [string]$this.SelectedItem.Content
             $isTimeBased = $kind -in @('单次', '每天', '每周', '每月', '每月（星期）')
             $vis = if ($isTimeBased) { 'Visible' } else { 'Collapsed' }
-            foreach ($c in $timeBasedFields) { $c.Visibility = $vis }
-            foreach ($c in $allTypeSpecific) { $c.Visibility = 'Collapsed' }
+            foreach ($c in $data.TimeBasedFields) { $c.Visibility = $vis }
+            foreach ($c in $data.AllTypeSpecific) { $c.Visibility = 'Collapsed' }
             switch ($kind) {
-                '每周' { foreach ($c in $weeklyFields) { $c.Visibility = 'Visible' } }
-                '每月' { foreach ($c in $monthlyFields) { $c.Visibility = 'Visible' } }
-                '每月（星期）' { foreach ($c in $monthlyDowFields) { $c.Visibility = 'Visible' } }
-                '注册时' { foreach ($c in $regFields) { $c.Visibility = 'Visible' } }
+                '每周' { foreach ($c in $data.WeeklyFields) { $c.Visibility = 'Visible' } }
+                '每月' { foreach ($c in $data.MonthlyFields) { $c.Visibility = 'Visible' } }
+                '每月（星期）' { foreach ($c in $data.MonthlyDowFields) { $c.Visibility = 'Visible' } }
+                '注册时' { foreach ($c in $data.RegFields) { $c.Visibility = 'Visible' } }
             }
         })
 
@@ -507,7 +514,7 @@ function Show-TaskEditor {
         $removeBtn.Add_Click({
             $target = $this.Tag
             [void]$script:__triggerRows.Remove($target)
-            [void]$triggersPanel.Children.Remove($target)
+            [void]$script:__triggersPanel.Children.Remove($target)
         })
 
         $outerBorder.Tag = $grid
@@ -650,7 +657,9 @@ function Show-TaskEditor {
                 $typeCombo = $g.Children[0]; $typeItem = $typeCombo.SelectedItem
                 $actType = if ($null -ne $typeItem.PSObject.Properties['Tag']) { [string]$typeItem.Tag } else { 'Exec' }
                 if ($actType -eq 'Exec') {
-                    $execPathBox = $g.Children[2]; $execArgsBox = $g.Children[4]; $execWdBox = $g.Children[6]
+                    # Children: 0=typeCombo, 1=removeBtn, 2=execPathLabel, 3=execPathBox, 4=execBrowseBtn,
+                    #           5=execArgsLabel, 6=execArgsBox, 7=execWdLabel, 8=execWdBox
+                    $execPathBox = $g.Children[3]; $execArgsBox = $g.Children[6]; $execWdBox = $g.Children[8]
                     $prog = [string]$execPathBox.Text
                     if ([string]::IsNullOrWhiteSpace($prog)) { throw '每个 Exec 操作的程序路径不能为空。' }
                     if ($prog.IndexOf([char]0) -ge 0) { throw '程序路径包含无效字符。' }
@@ -661,7 +670,8 @@ function Show-TaskEditor {
                     [void]$actionList.Add([PSCustomObject]@{ Type='Exec'; Program=$prog; Arguments=$args; WorkingDirectory=$wd; Title=''; MessageBody='' })
                 }
                 else {
-                    $msgTitleBox = $g.Children[7]; $msgBodyBox = $g.Children[9]
+                    # Children: 9=msgTitleLabel, 10=msgTitleBox, 11=msgBodyLabel, 12=msgBodyBox
+                    $msgTitleBox = $g.Children[10]; $msgBodyBox = $g.Children[12]
                     $title = [string]$msgTitleBox.Text
                     if ([string]::IsNullOrWhiteSpace($title)) { throw 'ShowMessage 操作标题不能为空。' }
                     [void]$actionList.Add([PSCustomObject]@{ Type='ShowMessage'; Program=''; Arguments=''; WorkingDirectory=''; Title=$title; MessageBody=[string]$msgBodyBox.Text })
@@ -675,10 +685,11 @@ function Show-TaskEditor {
             foreach ($row in $script:__triggerRows) {
                 $g = $row.Tag
                 $typeCombo = $g.Children[0]; $kind = [string]$typeCombo.SelectedItem.Content
-                $startDatePicker = $g.Children[4].Children[0]
-                $startTimeBox = $g.Children[4].Children[1]
-                $repeatMinsBox = $g.Children[5].Children[1]
-                $randomDelayBox = $g.Children[5].Children[3]
+                # Children: 2=dateTimePanel(.Children[0]=DatePicker,1=startTimeBox), 3=repeatPanel(.Children[1]=repeatMins,.Children[3]=randomDelay)
+                $startDatePicker = $g.Children[2].Children[0]
+                $startTimeBox = $g.Children[2].Children[1]
+                $repeatMinsBox = $g.Children[3].Children[1]
+                $randomDelayBox = $g.Children[3].Children[3]
 
                 $trgStartDate = $startDatePicker.SelectedDate
                 $trgStartTime = $startTimeBox.Text.Trim()
@@ -711,15 +722,17 @@ function Show-TaskEditor {
                 $trgDaysOfMonth = 0; $trgMonthsOfYear = 0; $trgWeeksOfMonth = 0; $trgDelay = ''
                 switch ($kind) {
                     '每周' {
-                        $dowToggles = $g.Children[6].Children | Where-Object { $_ -is [Windows.Controls.Primitives.ToggleButton] }
+                        # Children[4] = weeklyPanel: Children[0..6]=DOW toggles, [7]=weeksLabel, [8]=weeksIntervalBox
+                        $dowToggles = $g.Children[4].Children[0..6]
                         foreach ($tb in $dowToggles) { if ($tb.IsChecked) { $trgDaysOfWeek = $trgDaysOfWeek -bor [int]$tb.Tag } }
                         if ($trgDaysOfWeek -eq 0) { throw '每周触发器：请至少选择一个星期。' }
-                        $weeksBox = $g.Children[6].Children | Where-Object { $_ -is [Windows.Controls.TextBox] } | Select-Object -First 1
+                        $weeksBox = $g.Children[4].Children[8]
                         [int]::TryParse($weeksBox.Text.Trim(), [ref]$trgWeeksInterval) | Out-Null
                         if ($trgWeeksInterval -lt 1) { $trgWeeksInterval = 1 }
                     }
                     '每月' {
-                        $domText = ($g.Children[7].Children | Where-Object { $_ -is [Windows.Controls.TextBox] } | Select-Object -First 1).Text.Trim()
+                        # Children[5] = monthlyPanel: Children[0]=domLabel, [1]=domBox
+                        $domText = $g.Children[5].Children[1].Text.Trim()
                         if ($domText) {
                             foreach ($d in ($domText -split ',')) {
                                 $dn = 0; if ([int]::TryParse($d.Trim(), [ref]$dn) -and $dn -ge 1 -and $dn -le 31) {
@@ -728,21 +741,24 @@ function Show-TaskEditor {
                             }
                         }
                         if ($trgDaysOfMonth -eq 0) { throw '每月触发器：请填写有效的天号（逗号分隔，1-31）。' }
-                        $monthToggles = $g.Children[8].Children | Where-Object { $_ -is [Windows.Controls.Primitives.ToggleButton] }
+                        # Children[6] = monthsPanel: Children[0..11]=month toggles
+                        $monthToggles = $g.Children[6].Children[0..11]
                         foreach ($mt in $monthToggles) { if ($mt.IsChecked) { $trgMonthsOfYear = $trgMonthsOfYear -bor [int]$mt.Tag } }
                     }
                     '每月（星期）' {
-                        $mdowDOW = $g.Children[9].Children | Where-Object { $_ -is [Windows.Controls.Primitives.ToggleButton] }
-                        $dowTgs = @($mdowDOW)[0..6]; $womTgs = @($mdowDOW)[7..11]
+                        # Children[7] = monthlyDowPanel: Children[0..6]=DOW toggles, [7..11]=WOM toggles
+                        $dowTgs = $g.Children[7].Children[0..6]
+                        $womTgs = $g.Children[7].Children[7..11]
                         foreach ($tb in $dowTgs) { if ($tb.IsChecked) { $trgDaysOfWeek = $trgDaysOfWeek -bor [int]$tb.Tag } }
                         if ($trgDaysOfWeek -eq 0) { throw '每月（星期）触发器：请至少选择一个星期。' }
                         foreach ($wt in $womTgs) { if ($wt.IsChecked) { $trgWeeksOfMonth = $trgWeeksOfMonth -bor [int]$wt.Tag } }
                         if ($trgWeeksOfMonth -eq 0) { throw '每月（星期）触发器：请至少选择一周。' }
-                        $monthTogglesMD = $g.Children[8].Children | Where-Object { $_ -is [Windows.Controls.Primitives.ToggleButton] }
+                        $monthTogglesMD = $g.Children[6].Children[0..11]
                         foreach ($mt in $monthTogglesMD) { if ($mt.IsChecked) { $trgMonthsOfYear = $trgMonthsOfYear -bor [int]$mt.Tag } }
                     }
                     '注册时' {
-                        $trgDelay = ($g.Children[10].Children | Where-Object { $_ -is [Windows.Controls.TextBox] } | Select-Object -First 1).Text.Trim()
+                        # Children[8] = regDelayPanel: Children[0]=label, [1]=TextBox
+                        $trgDelay = $g.Children[8].Children[1].Text.Trim()
                         if ($trgDelay -and $trgDelay -notmatch '^PT(\d+H)?(\d+M)?(\d+S)?$') { throw '注册触发器延迟必须是 ISO 8601 格式。' }
                     }
                 }
