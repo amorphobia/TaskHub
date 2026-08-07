@@ -749,10 +749,7 @@ function Get-TaskEditData {
 
         # Per-trigger validation (replaces the old single-trigger gate).
         $triggerCount = [int]$triggers.Count
-        if ($triggerCount -eq 0) {
-            $reasons.Add('任务没有触发器')
-        }
-        else {
+        if ($triggerCount -gt 0) {
             $allowedEditTriggerTypes = @(
                 $script:TASK_TRIGGER_TIME, $script:TASK_TRIGGER_DAILY,
                 $script:TASK_TRIGGER_WEEKLY, $script:TASK_TRIGGER_MONTHLY,

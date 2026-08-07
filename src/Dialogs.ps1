@@ -620,10 +620,6 @@ function Show-TaskEditor {
     else {
         $taskPathBox.Text = $script:CurrentFolderPath
         $newAction = New-ActionRow
-        $newTrigger = New-TriggerRow
-        $newTrigger.StartDatePicker.SelectedDate = (Get-Date).Date.AddDays(1)
-        $newTrigger.StartTimeBox.Text = '09:00'
-        $newTrigger.RepeatMinsBox.Text = '0'
     }
 
     $addActionButton.Add_Click({ [void](New-ActionRow) })
@@ -762,8 +758,7 @@ function Show-TaskEditor {
                     WeeksOfMonth = $trgWeeksOfMonth; Delay = $trgDelay
                 })
             }
-            if ($triggerList.Count -eq 0) { throw '请至少添加一个触发器。' }
-            $firstTrigger = $triggerList[0]
+            $firstTrigger = if ($triggerList.Count -gt 0) { $triggerList[0] } else { $null }
 
             $normalizedPath = Resolve-FolderPath $taskPathBox.Text
             $name = $taskNameBox.Text
@@ -815,9 +810,9 @@ function Show-TaskEditor {
                 BackgroundMode = [bool]$backgroundBox.IsChecked
                 LogDirectory = [string]$logDirectoryBox.Text
                 Environment = $envVars
-                TriggerKind = $firstTrigger.Kind
-                StartDateTime = $firstTrigger.StartDate.Date.Add([TimeSpan]::Parse($firstTrigger.StartTime))
-                RepeatMinutes = $firstTrigger.RepeatMinutes
+                TriggerKind = if ($firstTrigger) { $firstTrigger.Kind } else { '单次' }
+                StartDateTime = if ($firstTrigger) { $firstTrigger.StartDate.Date.Add([TimeSpan]::Parse($firstTrigger.StartTime)) } else { Get-Date }
+                RepeatMinutes = if ($firstTrigger) { $firstTrigger.RepeatMinutes } else { 0 }
                 Overwrite = $overwrite
                 Actions = [object[]]$actionList
                 Triggers = [object[]]$triggerList
