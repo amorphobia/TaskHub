@@ -1179,14 +1179,17 @@ $script:MainWindow.FindName('DeleteButton').Add_Click({
                 Clear-ComObject $actions
                 Clear-ComObject $definition
             }
-            # Stop running instances before deletion to prevent orphaned processes.
-            if ([int]$task.State -eq 4) {
+            # Stop running background instances before deletion so that
+            # the wrapper and its child processes are terminated before
+            # file cleanup. Regular tasks follow system Task Scheduler
+            # behavior (delete does not stop running instances).
+            if ($null -ne $runtimeInfo -and [int]$task.State -eq 4) {
                 try {
                     $task.Stop(0)
-                    Write-AppLog -Message ('删除前已停止运行中的任务：{0}' -f $model.Path)
+                    Write-AppLog -Message ('删除前已停止运行中的后台应用：{0}' -f $model.Path)
                 }
                 catch {
-                    Write-AppLog -Level WARN -Message ('删除前停止任务失败：{0}；{1}' -f $model.Path, $_.Exception.Message)
+                    Write-AppLog -Level WARN -Message ('删除前停止后台应用失败：{0}；{1}' -f $model.Path, $_.Exception.Message)
                 }
             }
             $parts = Split-RegisteredTaskPath $model.Path
