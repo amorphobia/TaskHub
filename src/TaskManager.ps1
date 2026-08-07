@@ -1028,6 +1028,35 @@ function Initialize-TaskFolder {
     }
 }
 
+function Remove-EmptyTaskFolder {
+    param([Parameter(Mandatory = $true)][string]$FolderPath)
+    if ($FolderPath -eq '\') { return }
+    Connect-TaskService
+    $folder = $null
+    $tasks = $null
+    $subfolders = $null
+    try {
+        $folder = $script:TaskService.GetFolder($FolderPath)
+        $tasks = $folder.GetTasks(0)
+        $subfolders = $folder.GetFolders(0)
+        if ([int]$tasks.Count -eq 0 -and [int]$subfolders.Count -eq 0) {
+            $parentPath = Split-RegisteredTaskPath $FolderPath
+            $parent = $script:TaskService.GetFolder($parentPath.Folder)
+            $parent.DeleteFolder($parentPath.Name, 0)
+            Write-AppLog -Message ('已删除空任务文件夹 {0}' -f $FolderPath)
+        }
+    }
+    catch {
+        Write-AppLog -Level WARN -Message ('删除空任务文件夹 {0} 失败：{1}' -f $FolderPath, $_.Exception.Message)
+    }
+    finally {
+        Clear-ComObject $subfolders
+        Clear-ComObject $tasks
+        Clear-ComObject $parent
+        Clear-ComObject $folder
+    }
+}
+
 function Convert-MinutesToIsoDuration {
     param([int]$Minutes)
     if ($Minutes -le 0) { return $null }

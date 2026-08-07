@@ -1194,6 +1194,7 @@ $script:MainWindow.FindName('DeleteButton').Add_Click({
             }
             $parts = Split-RegisteredTaskPath $model.Path
             $folder.DeleteTask($parts.Name, 0)
+            Remove-EmptyTaskFolder -FolderPath $parts.Folder
             if ($null -ne $runtimeInfo) {
                 try {
                     Remove-BackgroundRuntimeFiles -RuntimeInfo $runtimeInfo -DeleteLogs ([bool]$deleteOptions.DeleteLogs)
