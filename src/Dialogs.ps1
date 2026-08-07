@@ -1033,6 +1033,38 @@ $script:TaskGrid.Add_ContextMenuOpening({
 
 $script:RefreshButton.Add_Click({ Update-All })
 $script:TaskGrid.Add_SelectionChanged({ Update-TaskDetails })
+$script:TaskGrid.Add_MouseDoubleClick({
+    $selected = $script:TaskGrid.SelectedItem
+    if ($null -eq $selected) { return }
+    try {
+        $existing = Get-TaskEditData -FullPath $selected.Path
+        if (-not $existing.Supported) {
+            Show-InfoMessage ($existing.Reason + "`n`n为避免丢失原始配置，此任务保持只读。仍可查看或导出 XML。")
+            return
+        }
+        $data = Show-TaskEditor -Mode Edit -ExistingData $existing
+        if ($null -eq $data) { return }
+        Set-Busy -Busy $true -Status ('正在编辑 {0} ...' -f $selected.Path)
+        $newPath = Register-TaskFromData -Data $data -OriginalFullPath $selected.Path
+        Show-InfoMessage ('任务编辑成功：{0}' -f $newPath)
+        $script:CurrentFolderPath = $data.TaskPath
+        Set-Status -Text ('任务编辑成功：{0}' -f $newPath)
+    }
+    catch {
+        $message = if ($_.Exception.Message -match '失败：|新任务已保存') {
+            $_.Exception.Message
+        }
+        else {
+            Get-FriendlyError -ErrorRecord $_ -Context ('编辑任务 {0}' -f $selected.Path)
+        }
+        Show-ErrorMessage $message
+        Set-Status -Text ('编辑失败：{0}' -f $message)
+    }
+    finally {
+        Set-Busy -Busy $false
+        Update-All
+    }
+})
 $script:FolderTree.Add_SelectedItemChanged({
     if (-not $script:IsBusy -and $null -ne $script:FolderTree.SelectedItem) {
         Update-TaskList -FolderPath ([string]$script:FolderTree.SelectedItem.Tag)
