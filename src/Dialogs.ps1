@@ -7,7 +7,7 @@ function Show-TaskEditor {
     [xml]$editorXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="任务" Width="780" Height="1050" MinWidth="700" MinHeight="900"
+        Title="任务" Width="780" Height="950" MinWidth="700" MinHeight="800"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
   <Grid Margin="16">
     <Grid.RowDefinitions>
