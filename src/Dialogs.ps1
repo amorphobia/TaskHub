@@ -283,17 +283,28 @@ function Show-TaskEditor {
         # Wire browse button after all text boxes exist.
         $execBrowseBtn.Tag = [PSCustomObject]@{ PathBox = $execPathBox; WdBox = $execWdBox }
         $execBrowseBtn.Add_Click({
-            $data = $this.Tag
-            $dialog = New-Object Microsoft.Win32.OpenFileDialog
-            $dialog.Title = '选择要运行的程序'
-            $dialog.Filter = '可执行文件 (*.exe;*.com;*.bat;*.cmd)|*.exe;*.com;*.bat;*.cmd|所有文件 (*.*)|*.*'
-            if ($dialog.ShowDialog($window)) {
-                $data.PathBox.Text = $dialog.FileName
-                if ([string]::IsNullOrWhiteSpace($data.WdBox.Text)) {
-                    $data.WdBox.Text = [IO.Path]::GetDirectoryName($dialog.FileName)
+            try {
+                $data = $this.Tag
+                $dialog = New-Object Microsoft.Win32.OpenFileDialog
+                $dialog.Title = '选择要运行的程序'
+                $dialog.Filter = '可执行文件 (*.exe;*.com;*.bat;*.cmd)|*.exe;*.com;*.bat;*.cmd|所有文件 (*.*)|*.*'
+                if ($dialog.ShowDialog($window)) {
+                    $data.PathBox.Text = $dialog.FileName
+                    if ([string]::IsNullOrWhiteSpace($data.WdBox.Text)) {
+                        $data.WdBox.Text = [IO.Path]::GetDirectoryName($dialog.FileName)
+                    }
                 }
             }
-            $dialog.Dispose()
+            catch {
+                [void][Windows.MessageBox]::Show(
+                    $window, $_.Exception.Message,
+                    '浏览文件失败',
+                    [Windows.MessageBoxButton]::OK, [Windows.MessageBoxImage]::Warning
+                )
+            }
+            finally {
+                if ($null -ne $dialog) { $dialog.Dispose() }
+            }
         })
 
         # Exec field list for toggling — stored on combo for event handler access.
