@@ -105,7 +105,12 @@ function Show-TaskEditor {
 </Window>
 '@
     $reader = New-Object Xml.XmlNodeReader $editorXaml
-    $window = [Windows.Markup.XamlReader]::Load($reader)
+    try {
+        $window = [Windows.Markup.XamlReader]::Load($reader)
+    }
+    finally {
+        $reader.Dispose()
+    }
     $window.Owner = $script:MainWindow
     $window.Title = if ($Mode -eq 'Create') { '创建任务' } else { '编辑任务' }
 
@@ -288,6 +293,7 @@ function Show-TaskEditor {
                     $data.WdBox.Text = [IO.Path]::GetDirectoryName($dialog.FileName)
                 }
             }
+            $dialog.Dispose()
         })
 
         # Exec field list for toggling — stored on combo for event handler access.
@@ -305,7 +311,12 @@ function Show-TaskEditor {
             [void]$script:__actionsPanel.Children.Remove($target)
         })
 
-        $outerBorder.Tag = $grid
+        $outerBorder.Tag = [PSCustomObject]@{
+            Grid = $grid
+            ExecPathBox = $execPathBox
+            ExecArgsBox = $execArgsBox
+            ExecWdBox = $execWdBox
+        }
         $outerBorder.Child = $grid
         [void]$actionsPanel.Children.Add($outerBorder)
         [void]$script:__actionRows.Add($outerBorder)
@@ -517,7 +528,21 @@ function Show-TaskEditor {
             [void]$script:__triggersPanel.Children.Remove($target)
         })
 
-        $outerBorder.Tag = $grid
+        $outerBorder.Tag = [PSCustomObject]@{
+            Grid = $grid
+            TypeCombo = $typeCombo
+            StartDatePicker = $startDatePicker
+            StartTimeBox = $startTimeBox
+            RepeatMinsBox = $repeatMinsBox
+            RandomDelayBox = $randomDelayBox
+            DowToggles = $dowTogglesForWeekly
+            WeeksIntervalBox = $weeksIntervalBox
+            DomBox = $domBox
+            MonthToggles = $monthToggles
+            MonthlyDowDOWToggles = $dowTogglesForMDOW
+            WomToggles = $womToggles
+            RegDelayBox = $regDelayBox
+        }
         $outerBorder.Child = $grid
         [void]$triggersPanel.Children.Add($outerBorder)
         [void]$script:__triggerRows.Add($outerBorder)
@@ -645,10 +670,8 @@ function Show-TaskEditor {
             # --- Extract actions ---
             $actionList = New-Object 'System.Collections.Generic.List[object]'
             foreach ($row in $script:__actionRows) {
-                $g = $row.Tag
-                # Children: 0=typeCombo, 1=removeBtn, 2=execPathLabel, 3=execPathBox, 4=execBrowseBtn,
-                #           5=execArgsLabel, 6=execArgsBox, 7=execWdLabel, 8=execWdBox
-                $execPathBox = $g.Children[3]; $execArgsBox = $g.Children[6]; $execWdBox = $g.Children[8]
+                $tag = $row.Tag
+                $execPathBox = $tag.ExecPathBox; $execArgsBox = $tag.ExecArgsBox; $execWdBox = $tag.ExecWdBox
                 $prog = [string]$execPathBox.Text
                 if ([string]::IsNullOrWhiteSpace($prog)) { throw '程序路径不能为空。' }
                 if ($prog.IndexOf([char]0) -ge 0) { throw '程序路径包含无效字符。' }
@@ -664,13 +687,12 @@ function Show-TaskEditor {
             # --- Extract triggers ---
             $triggerList = New-Object 'System.Collections.Generic.List[object]'
             foreach ($row in $script:__triggerRows) {
-                $g = $row.Tag
-                $typeCombo = $g.Children[0]; $kind = [string]$typeCombo.SelectedItem.Content
-                # Children: 2=dateTimePanel(.Children[0]=DatePicker,1=startTimeBox), 3=repeatPanel(.Children[1]=repeatMins,.Children[3]=randomDelay)
-                $startDatePicker = $g.Children[2].Children[0]
-                $startTimeBox = $g.Children[2].Children[1]
-                $repeatMinsBox = $g.Children[3].Children[1]
-                $randomDelayBox = $g.Children[3].Children[3]
+                $tag = $row.Tag
+                $kind = [string]$tag.TypeCombo.SelectedItem.Content
+                $startDatePicker = $tag.StartDatePicker
+                $startTimeBox = $tag.StartTimeBox
+                $repeatMinsBox = $tag.RepeatMinsBox
+                $randomDelayBox = $tag.RandomDelayBox
 
                 $trgStartDate = $startDatePicker.SelectedDate
                 $trgStartTime = $startTimeBox.Text.Trim()
@@ -703,17 +725,13 @@ function Show-TaskEditor {
                 $trgDaysOfMonth = 0; $trgMonthsOfYear = 0; $trgWeeksOfMonth = 0; $trgDelay = ''
                 switch ($kind) {
                     '每周' {
-                        # Children[4] = weeklyPanel: Children[0..6]=DOW toggles, [7]=weeksLabel, [8]=weeksIntervalBox
-                        $dowToggles = $g.Children[4].Children[0..6]
-                        foreach ($tb in $dowToggles) { if ($tb.IsChecked) { $trgDaysOfWeek = $trgDaysOfWeek -bor [int]$tb.Tag } }
+                        foreach ($tb in $tag.DowToggles) { if ($tb.IsChecked) { $trgDaysOfWeek = $trgDaysOfWeek -bor [int]$tb.Tag } }
                         if ($trgDaysOfWeek -eq 0) { throw '每周触发器：请至少选择一个星期。' }
-                        $weeksBox = $g.Children[4].Children[8]
-                        [int]::TryParse($weeksBox.Text.Trim(), [ref]$trgWeeksInterval) | Out-Null
+                        [int]::TryParse($tag.WeeksIntervalBox.Text.Trim(), [ref]$trgWeeksInterval) | Out-Null
                         if ($trgWeeksInterval -lt 1) { $trgWeeksInterval = 1 }
                     }
                     '每月' {
-                        # Children[5] = monthlyPanel: Children[0]=domLabel, [1]=domBox
-                        $domText = $g.Children[5].Children[1].Text.Trim()
+                        $domText = $tag.DomBox.Text.Trim()
                         if ($domText) {
                             foreach ($d in ($domText -split ',')) {
                                 $dn = 0; if ([int]::TryParse($d.Trim(), [ref]$dn) -and $dn -ge 1 -and $dn -le 31) {
@@ -722,24 +740,17 @@ function Show-TaskEditor {
                             }
                         }
                         if ($trgDaysOfMonth -eq 0) { throw '每月触发器：请填写有效的天号（逗号分隔，1-31）。' }
-                        # Children[6] = monthsPanel: Children[0..11]=month toggles
-                        $monthToggles = $g.Children[6].Children[0..11]
-                        foreach ($mt in $monthToggles) { if ($mt.IsChecked) { $trgMonthsOfYear = $trgMonthsOfYear -bor [int]$mt.Tag } }
+                        foreach ($mt in $tag.MonthToggles) { if ($mt.IsChecked) { $trgMonthsOfYear = $trgMonthsOfYear -bor [int]$mt.Tag } }
                     }
                     '每月（星期）' {
-                        # Children[7] = monthlyDowPanel: Children[0..6]=DOW toggles, [7..11]=WOM toggles
-                        $dowTgs = $g.Children[7].Children[0..6]
-                        $womTgs = $g.Children[7].Children[7..11]
-                        foreach ($tb in $dowTgs) { if ($tb.IsChecked) { $trgDaysOfWeek = $trgDaysOfWeek -bor [int]$tb.Tag } }
+                        foreach ($tb in $tag.MonthlyDowDOWToggles) { if ($tb.IsChecked) { $trgDaysOfWeek = $trgDaysOfWeek -bor [int]$tb.Tag } }
                         if ($trgDaysOfWeek -eq 0) { throw '每月（星期）触发器：请至少选择一个星期。' }
-                        foreach ($wt in $womTgs) { if ($wt.IsChecked) { $trgWeeksOfMonth = $trgWeeksOfMonth -bor [int]$wt.Tag } }
+                        foreach ($wt in $tag.WomToggles) { if ($wt.IsChecked) { $trgWeeksOfMonth = $trgWeeksOfMonth -bor [int]$wt.Tag } }
                         if ($trgWeeksOfMonth -eq 0) { throw '每月（星期）触发器：请至少选择一周。' }
-                        $monthTogglesMD = $g.Children[6].Children[0..11]
-                        foreach ($mt in $monthTogglesMD) { if ($mt.IsChecked) { $trgMonthsOfYear = $trgMonthsOfYear -bor [int]$mt.Tag } }
+                        foreach ($mt in $tag.MonthToggles) { if ($mt.IsChecked) { $trgMonthsOfYear = $trgMonthsOfYear -bor [int]$mt.Tag } }
                     }
                     '注册时' {
-                        # Children[8] = regDelayPanel: Children[0]=label, [1]=TextBox
-                        $trgDelay = $g.Children[8].Children[1].Text.Trim()
+                        $trgDelay = $tag.RegDelayBox.Text.Trim()
                         if ($trgDelay -and $trgDelay -notmatch '^PT(\d+H)?(\d+M)?(\d+S)?$') { throw '注册触发器延迟必须是 ISO 8601 格式。' }
                     }
                 }
@@ -823,10 +834,20 @@ function Show-TaskEditor {
         }
     })
 
-    if ($window.ShowDialog()) {
-        return $window.Tag
+    try {
+        if ($window.ShowDialog()) {
+            return $window.Tag
+        }
+        return $null
     }
-    return $null
+    finally {
+        $script:__envVarRows = $null
+        $script:__envVarsPanel = $null
+        $script:__actionRows = $null
+        $script:__actionsPanel = $null
+        $script:__triggerRows = $null
+        $script:__triggersPanel = $null
+    }
 }
 
 function Show-DeleteTaskDialog {
@@ -856,7 +877,12 @@ function Show-DeleteTaskDialog {
 </Window>
 '@
     $reader = New-Object Xml.XmlNodeReader $deleteXaml
-    $window = [Windows.Markup.XamlReader]::Load($reader)
+    try {
+        $window = [Windows.Markup.XamlReader]::Load($reader)
+    }
+    finally {
+        $reader.Dispose()
+    }
     $window.Owner = $script:MainWindow
     $window.FindName('PathText').Text = $FullTaskPath
     $deleteLogsBox = $window.FindName('DeleteLogsBox')
@@ -960,7 +986,12 @@ function Show-DeleteTaskDialog {
 '@
 
 $mainReader = New-Object Xml.XmlNodeReader $mainXaml
-$script:MainWindow = [Windows.Markup.XamlReader]::Load($mainReader)
+try {
+    $script:MainWindow = [Windows.Markup.XamlReader]::Load($mainReader)
+}
+finally {
+    $mainReader.Dispose()
+}
 $script:MainIconLoaded = Set-MainWindowIcon -Window $script:MainWindow
 $script:FolderTree = $script:MainWindow.FindName('FolderTree')
 $script:TaskGrid = $script:MainWindow.FindName('TaskGrid')
@@ -1148,6 +1179,16 @@ $script:MainWindow.FindName('DeleteButton').Add_Click({
                 Clear-ComObject $actions
                 Clear-ComObject $definition
             }
+            # Stop running instances before deletion to prevent orphaned processes.
+            if ([int]$task.State -eq 4) {
+                try {
+                    $task.Stop(0)
+                    Write-AppLog -Message ('删除前已停止运行中的任务：{0}' -f $model.Path)
+                }
+                catch {
+                    Write-AppLog -Level WARN -Message ('删除前停止任务失败：{0}；{1}' -f $model.Path, $_.Exception.Message)
+                }
+            }
             $parts = Split-RegisteredTaskPath $model.Path
             $folder.DeleteTask($parts.Name, 0)
             if ($null -ne $runtimeInfo) {
@@ -1219,6 +1260,7 @@ $script:MainWindow.FindName('ExportXmlButton').Add_Click({
         Show-InfoMessage '请先选择一个任务。'
         return
     }
+    $dialog = $null
     try {
         $dialog = New-Object Microsoft.Win32.SaveFileDialog
         $dialog.Title = '导出任务 XML'
@@ -1236,6 +1278,9 @@ $script:MainWindow.FindName('ExportXmlButton').Add_Click({
     }
     catch {
         Show-ErrorMessage (Get-FriendlyError -ErrorRecord $_ -Context ('导出 XML {0}' -f $selected.Path))
+    }
+    finally {
+        if ($null -ne $dialog) { $dialog.Dispose() }
     }
 })
 

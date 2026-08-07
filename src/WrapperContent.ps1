@@ -320,6 +320,11 @@ namespace UserTaskManager
                 startup.hStdOutput = stdoutHandle;
                 startup.hStdError = stderrHandle;
 
+                // The executable path is quoted per CommandLineToArgvW rules.
+                // Arguments originate from this application's own config.json and
+                // are already formatted as a command-line argument string by the
+                // task editor. They are NOT quoted here because they may contain
+                // multiple pre-quoted arguments (e.g. -NoLogo -File "path").
                 string commandText = QuoteCommandLineArgument(executable);
                 if (!String.IsNullOrWhiteSpace(arguments))
                     commandText += " " + arguments;

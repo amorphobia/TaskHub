@@ -85,6 +85,7 @@ function Get-TriggerSummary {
         foreach ($trigger in @($triggers)) {
             try {
                 $text = switch ([int]$trigger.Type) {
+                    0 { '事件触发' }
                     1 { '单次 {0}' -f (Format-TaskDate $trigger.StartBoundary) }
                     2 { '每天 {0}' -f (Format-TaskDate $trigger.StartBoundary) }
                     3 {
@@ -117,7 +118,7 @@ function Get-TriggerSummary {
                     }
                     8 { '启动时' }
                     9 { '用户登录时' }
-                    11 { '事件触发' }
+                    11 { '会话状态变更' }
                     default { '触发器类型 {0}' -f $trigger.Type }
                 }
                 try {
@@ -469,6 +470,9 @@ function Update-All {
 
 function Split-RegisteredTaskPath {
     param([Parameter(Mandatory = $true)][string]$FullPath)
+    if ([string]::IsNullOrWhiteSpace($FullPath) -or $FullPath.TrimEnd('\') -eq '') {
+        throw ('FullPath 无效：不能为根路径或空字符串 ''{0}''' -f $FullPath)
+    }
     $lastSlash = $FullPath.LastIndexOf('\')
     if ($lastSlash -le 0) {
         return [PSCustomObject]@{ Folder = '\'; Name = $FullPath.TrimStart('\') }
@@ -721,8 +725,12 @@ function Get-TaskEditData {
 
         # Reject structures that this editor cannot faithfully represent.
         $xml = [xml]([string]$task.Xml)
+        $taskNamespace = $xml.DocumentElement.NamespaceURI
+        if ([string]::IsNullOrWhiteSpace($taskNamespace)) {
+            $taskNamespace = 'http://schemas.microsoft.com/windows/2004/02/mit/task'
+        }
         $ns = New-Object Xml.XmlNamespaceManager($xml.NameTable)
-        $ns.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
+        $ns.AddNamespace('t', $taskNamespace)
         $unsupportedTriggerNodes = @($xml.SelectNodes(
             '/t:Task/t:Triggers/*[not(self::t:TimeTrigger or self::t:CalendarTrigger or self::t:LogonTrigger or self::t:IdleTrigger or self::t:RegistrationTrigger)]',
             $ns
@@ -964,7 +972,6 @@ function Get-TaskEditData {
     }
     finally {
         Clear-ComObject $firstExecAction
-        Clear-ComObject $action
         Clear-ComObject $principal
         Clear-ComObject $triggers
         Clear-ComObject $actions
@@ -1242,6 +1249,7 @@ function Register-TaskFromData {
         for ($i = 0; $i -lt $actionList.Count; $i++) {
             $actData = $actionList[$i]
             if ($actData.Type -eq 'Exec') {
+                if ($null -ne $action) { Clear-ComObject $action }
                 $action = $actions.Create($script:TASK_ACTION_EXEC)
                 if ($backgroundMode -and $firstExecIndex -lt 0) {
                     $action.Path = $backgroundInstallState.Values.ActionPath
@@ -1256,7 +1264,6 @@ function Register-TaskFromData {
                 }
             }
         }
-        $action = $null
 
         $flags = $script:TASK_CREATE
         if ($Data.Overwrite) {

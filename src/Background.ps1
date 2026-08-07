@@ -57,11 +57,14 @@ function Update-TaskContextMenu {
 
     $hasTask = $null -ne $TaskModel
     $isEnabled = $hasTask -and [bool]$TaskModel.Enabled
+    $isRunning = $hasTask -and $TaskModel.State -eq '正在运行'
     $visible = [Windows.Visibility]::Visible
     $collapsed = [Windows.Visibility]::Collapsed
 
-    $script:TaskContextRunItem.Visibility = if ($isEnabled) { $visible } else { $collapsed }
-    $script:TaskContextStopItem.Visibility = if ($isEnabled) { $visible } else { $collapsed }
+    # Run only for enabled, non-running tasks (running tasks cannot be re-run).
+    $script:TaskContextRunItem.Visibility = if ($isEnabled -and -not $isRunning) { $visible } else { $collapsed }
+    # Stop for enabled tasks, and also for disabled tasks that are still running.
+    $script:TaskContextStopItem.Visibility = if ($isEnabled -or ($hasTask -and $isRunning)) { $visible } else { $collapsed }
     $script:TaskContextDisableItem.Visibility = if ($isEnabled) { $visible } else { $collapsed }
     $script:TaskContextEnableItem.Visibility = if ($hasTask -and -not $isEnabled) { $visible } else { $collapsed }
     $script:TaskContextExportItem.Visibility = if ($hasTask) { $visible } else { $collapsed }
@@ -105,6 +108,11 @@ function Resolve-BackgroundLogDirectory {
         throw '自定义日志目录必须是绝对路径。'
     }
     $customFullPath = [IO.Path]::GetFullPath($expandedPath)
+    $containmentRoot = [IO.Path]::GetFullPath($script:LogDirectory)
+    $requiredPrefix = $containmentRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $customFullPath.StartsWith($requiredPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw ('自定义日志目录必须在 {0} 下。当前路径：{1}' -f $containmentRoot, $customFullPath)
+    }
     $customRoot = [IO.Path]::GetPathRoot($customFullPath)
     if (-not [string]::Equals($customFullPath, $customRoot, [StringComparison]::OrdinalIgnoreCase)) {
         $customFullPath = $customFullPath.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
@@ -304,6 +312,9 @@ function Install-BackgroundRuntime {
             Environment = $envObject
         }
         $configJson = $config | ConvertTo-Json -Depth 3
+        if ([string]::IsNullOrWhiteSpace($script:BackgroundWrapperContent)) {
+            throw 'BackgroundWrapperContent 为空；构建产物可能已损坏。请使用 build.ps1 重新构建。'
+        }
         [IO.File]::WriteAllText($values.WrapperPath, $script:BackgroundWrapperContent, (New-Object Text.UTF8Encoding($true)))
         [IO.File]::WriteAllText($values.ConfigPath, $configJson, (New-Object Text.UTF8Encoding($true)))
         Write-AppLog -Message ('已部署后台运行文件：{0}' -f $values.RuntimeDirectory)
