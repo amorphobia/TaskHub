@@ -168,7 +168,7 @@ function Get-ActionSummary {
                     }
                     $summaries.Add($summary)
                 }
-                elseif ([int]$action.Type -eq $script:TASK_ACTION_SHOW_MESSAGE) {
+                elseif ([int]$action.Type -eq 7) {
                     $summaries.Add(('消息：{0}' -f [string]$action.Title))
                 }
                 else {
@@ -668,8 +668,9 @@ function Get-TaskEditData {
                 try {
                     $a = $actions.Item($aIdx)
                     $aType = [int]$a.Type
-                    if ($aType -ne $script:TASK_ACTION_EXEC -and $aType -ne $script:TASK_ACTION_SHOW_MESSAGE) {
-                        $reasons.Add(('操作 {0} 的类型不支持' -f $aIdx))
+                    if ($aType -ne $script:TASK_ACTION_EXEC) {
+                        if ($aType -eq 7) { $reasons.Add(('操作 {0}（显示消息）已弃用，不受支持' -f $aIdx)) }
+                        else { $reasons.Add(('操作 {0} 的类型不支持' -f $aIdx)) }
                     }
                 }
                 catch {
@@ -829,15 +830,9 @@ function Get-TaskEditData {
                         MessageBody = ''
                     })
                 }
-                elseif ($aType -eq $script:TASK_ACTION_SHOW_MESSAGE) {
-                    $actionList.Add([PSCustomObject]@{
-                        Type = 'ShowMessage'
-                        Program = ''
-                        Arguments = ''
-                        WorkingDirectory = ''
-                        Title = [string]$a.Title
-                        MessageBody = [string]$a.MessageBody
-                    })
+                elseif ($aType -eq 7) {
+                    # ShowMessage is deprecated; keep the action as unsupported
+                    # so Get-TaskEditData returns Supported=$false for these tasks.
                 }
             }
             catch {
@@ -1121,18 +1116,6 @@ function Register-TaskFromData {
             $settings.MultipleInstances = 0
         }
 
-        # ShowMessage action requires TASK_COMPATIBILITY_V2 — the element is
-        # rejected by the V2_1+ XML schemas since the action was deprecated in
-        # Windows 8.
-        if ($null -ne $Data.PSObject.Properties['Actions']) {
-            foreach ($a in $Data.Actions) {
-                if ($a.Type -eq 'ShowMessage') {
-                    $settings.Compatibility = $script:TASK_COMPATIBILITY_V2
-                    break
-                }
-            }
-        }
-
         $triggers = $definition.Triggers
         $triggers.Clear()
 
@@ -1271,11 +1254,6 @@ function Register-TaskFromData {
                     $action.Arguments = [string]$actData.Arguments
                     $action.WorkingDirectory = [string]$actData.WorkingDirectory
                 }
-            }
-            elseif ($actData.Type -eq 'ShowMessage') {
-                $action = $actions.Create($script:TASK_ACTION_SHOW_MESSAGE)
-                $action.Title = [string]$actData.Title
-                $action.MessageBody = [string]$actData.MessageBody
             }
         }
         $action = $null

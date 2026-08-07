@@ -80,9 +80,6 @@ $script:TASK_TRIGGER_MONTHLYDOW = 5
 $script:TASK_TRIGGER_IDLE = 6
 $script:TASK_TRIGGER_REGISTRATION = 7
 
-# Additional action constants.
-$script:TASK_ACTION_SHOW_MESSAGE = 7
-$script:TASK_COMPATIBILITY_V2 = 2
 
 # Day-of-week bitmask helpers.
 $script:DayOfWeekNames = @('星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六')

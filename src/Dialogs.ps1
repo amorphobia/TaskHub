@@ -200,10 +200,10 @@ function Show-TaskEditor {
         # Row 0: type combo + remove button
         $typeCombo = New-Object Windows.Controls.ComboBox
         $typeCombo.Margin = [Windows.Thickness]::new(2)
-        $itemExec = New-Object Windows.Controls.ComboBoxItem; $itemExec.Content = 'Exec 程序'; $itemExec.Tag = 'Exec'
-        $itemMsg = New-Object Windows.Controls.ComboBoxItem; $itemMsg.Content = '显示消息'; $itemMsg.Tag = 'ShowMessage'
-        [void]$typeCombo.Items.Add($itemExec); [void]$typeCombo.Items.Add($itemMsg)
+        $itemExec = New-Object Windows.Controls.ComboBoxItem; $itemExec.Content = 'Exec 程序'
+        [void]$typeCombo.Items.Add($itemExec)
         $typeCombo.SelectedIndex = 0
+        $typeCombo.IsEnabled = $false
         [Windows.Controls.Grid]::SetRow($typeCombo, 0); [Windows.Controls.Grid]::SetColumn($typeCombo, 1)
         [void]$grid.Children.Add($typeCombo)
 
@@ -294,10 +294,8 @@ function Show-TaskEditor {
         $typeCombo.Tag = [PSCustomObject]@{ ExecFields = @($execPathLabel, $execPathBox, $execBrowseBtn, $execArgsLabel, $execArgsBox, $execWdLabel, $execWdBox); MsgFields = @($msgTitleLabel, $msgTitleBox, $msgBodyLabel, $msgBodyBox) }
 
         $typeCombo.Add_SelectionChanged({
-            $data = $this.Tag
-            $isExec = $this.SelectedIndex -eq 0
-            foreach ($c in $data.ExecFields) { $c.Visibility = if ($isExec) { 'Visible' } else { 'Collapsed' } }
-            foreach ($c in $data.MsgFields) { $c.Visibility = if ($isExec) { 'Collapsed' } else { 'Visible' } }
+            # Only Exec is supported; ShowMessage is a deprecated feature that
+            # the Task Scheduler service rejects on modern Windows.
         })
 
         $removeBtn.Tag = $outerBorder
@@ -561,17 +559,9 @@ function Show-TaskEditor {
         if ($null -ne $ExistingData.PSObject.Properties['Actions'] -and $ExistingData.Actions.Count -gt 0) {
             foreach ($actData in $ExistingData.Actions) {
                 $ar = New-ActionRow
-                if ($actData.Type -eq 'ShowMessage') {
-                    $ar.TypeCombo.SelectedIndex = 1
-                    $ar.MsgTitleBox.Text = $actData.Title
-                    $ar.MsgBodyBox.Text = $actData.MessageBody
-                }
-                else {
-                    $ar.TypeCombo.SelectedIndex = 0
-                    $ar.ExecPathBox.Text = $actData.Program
-                    $ar.ExecArgsBox.Text = $actData.Arguments
-                    $ar.ExecWdBox.Text = $actData.WorkingDirectory
-                }
+                $ar.ExecPathBox.Text = $actData.Program
+                $ar.ExecArgsBox.Text = $actData.Arguments
+                $ar.ExecWdBox.Text = $actData.WorkingDirectory
             }
         }
         # Populate triggers from edit data.
@@ -656,28 +646,17 @@ function Show-TaskEditor {
             $actionList = New-Object 'System.Collections.Generic.List[object]'
             foreach ($row in $script:__actionRows) {
                 $g = $row.Tag
-                $typeCombo = $g.Children[0]
-                $actType = if ($typeCombo.SelectedIndex -eq 0) { 'Exec' } else { 'ShowMessage' }
-                if ($actType -eq 'Exec') {
-                    # Children: 0=typeCombo, 1=removeBtn, 2=execPathLabel, 3=execPathBox, 4=execBrowseBtn,
-                    #           5=execArgsLabel, 6=execArgsBox, 7=execWdLabel, 8=execWdBox
-                    $execPathBox = $g.Children[3]; $execArgsBox = $g.Children[6]; $execWdBox = $g.Children[8]
-                    $prog = [string]$execPathBox.Text
-                    if ([string]::IsNullOrWhiteSpace($prog)) { throw '每个 Exec 操作的程序路径不能为空。' }
-                    if ($prog.IndexOf([char]0) -ge 0) { throw '程序路径包含无效字符。' }
-                    $args = [string]$execArgsBox.Text
-                    if ($args.IndexOf([char]0) -ge 0) { throw '参数包含无效字符。' }
-                    $wd = [string]$execWdBox.Text
-                    if ($wd.IndexOf([char]0) -ge 0) { throw '工作目录包含无效字符。' }
-                    [void]$actionList.Add([PSCustomObject]@{ Type='Exec'; Program=$prog; Arguments=$args; WorkingDirectory=$wd; Title=''; MessageBody='' })
-                }
-                else {
-                    # Children: 9=msgTitleLabel, 10=msgTitleBox, 11=msgBodyLabel, 12=msgBodyBox
-                    $msgTitleBox = $g.Children[10]; $msgBodyBox = $g.Children[12]
-                    $title = [string]$msgTitleBox.Text
-                    if ([string]::IsNullOrWhiteSpace($title)) { throw 'ShowMessage 操作标题不能为空。' }
-                    [void]$actionList.Add([PSCustomObject]@{ Type='ShowMessage'; Program=''; Arguments=''; WorkingDirectory=''; Title=$title; MessageBody=[string]$msgBodyBox.Text })
-                }
+                # Children: 0=typeCombo, 1=removeBtn, 2=execPathLabel, 3=execPathBox, 4=execBrowseBtn,
+                #           5=execArgsLabel, 6=execArgsBox, 7=execWdLabel, 8=execWdBox
+                $execPathBox = $g.Children[3]; $execArgsBox = $g.Children[6]; $execWdBox = $g.Children[8]
+                $prog = [string]$execPathBox.Text
+                if ([string]::IsNullOrWhiteSpace($prog)) { throw '程序路径不能为空。' }
+                if ($prog.IndexOf([char]0) -ge 0) { throw '程序路径包含无效字符。' }
+                $args = [string]$execArgsBox.Text
+                if ($args.IndexOf([char]0) -ge 0) { throw '参数包含无效字符。' }
+                $wd = [string]$execWdBox.Text
+                if ($wd.IndexOf([char]0) -ge 0) { throw '工作目录包含无效字符。' }
+                [void]$actionList.Add([PSCustomObject]@{ Type='Exec'; Program=$prog; Arguments=$args; WorkingDirectory=$wd; Title=''; MessageBody='' })
             }
             if ($actionList.Count -eq 0) { throw '请至少添加一个操作。' }
             $firstAction = $actionList[0]

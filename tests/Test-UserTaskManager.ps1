@@ -41,7 +41,6 @@ $TASK_TRIGGER_IDLE = 6
 $TASK_TRIGGER_REGISTRATION = 7
 $TASK_TRIGGER_LOGON = 9
 $TASK_ACTION_EXEC = 0
-$TASK_ACTION_SHOW_MESSAGE = 7
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $currentSid = $identity.User.Value
@@ -123,9 +122,6 @@ function New-TestDefinition {
         [ValidateSet('Logon', 'Once', 'Daily', 'Weekly', 'Monthly', 'MonthlyDOW', 'Idle', 'Registration')]
         [string]$Kind,
         [string]$Description,
-        [int]$ActionType = $TASK_ACTION_EXEC,
-        [string]$MsgTitle = '',
-        [string]$MsgBody = '',
         [int]$DaysOfWeek = 0,
         [int]$WeeksInterval = 1,
         [int]$DaysOfMonth = 0,
@@ -214,17 +210,10 @@ function New-TestDefinition {
         }
 
         $actions = $definition.Actions
-        if ($ActionType -eq $TASK_ACTION_SHOW_MESSAGE) {
-            $action = $actions.Create($TASK_ACTION_SHOW_MESSAGE)
-            $action.Title = $MsgTitle
-            $action.MessageBody = $MsgBody
-        }
-        else {
-            $action = $actions.Create($TASK_ACTION_EXEC)
-            $action.Path = Join-Path $env:SystemRoot 'System32\PING.EXE'
-            $action.Arguments = '127.0.0.1 -n 6'
-            $action.WorkingDirectory = [Environment]::GetFolderPath('LocalApplicationData')
-        }
+        $action = $actions.Create($TASK_ACTION_EXEC)
+        $action.Path = Join-Path $env:SystemRoot 'System32\PING.EXE'
+        $action.Arguments = '127.0.0.1 -n 6'
+        $action.WorkingDirectory = [Environment]::GetFolderPath('LocalApplicationData')
 
         return $definition
     }
@@ -245,9 +234,6 @@ function Register-TestTask {
     param(
         [string]$Name,
         [ValidateSet('Logon', 'Once', 'Daily', 'Weekly', 'Monthly', 'MonthlyDOW', 'Idle', 'Registration')][string]$Kind,
-        [int]$ActionType = $TASK_ACTION_EXEC,
-        [string]$MsgTitle = '',
-        [string]$MsgBody = '',
         [int]$DaysOfWeek = 0,
         [int]$WeeksInterval = 1,
         [int]$DaysOfMonth = 0,
@@ -263,9 +249,6 @@ function Register-TestTask {
         $splat = @{
             Kind = $Kind
             Description = ('UserTaskManager safety test; unique name={0}' -f $Name)
-            ActionType = $ActionType
-            MsgTitle = $MsgTitle
-            MsgBody = $MsgBody
             DaysOfWeek = $DaysOfWeek
             WeeksInterval = $WeeksInterval
             DaysOfMonth = $DaysOfMonth
@@ -298,14 +281,12 @@ function Assert-TestTask {
     param(
         [string]$Name,
         [int]$ExpectedTriggerType,
-        [int]$ExpectedActionType = $TASK_ACTION_EXEC,
         [int]$ExpectedDaysOfWeek = 0,
         [int]$ExpectedWeeksInterval = 1,
         [int]$ExpectedDaysOfMonth = 0,
         [int]$ExpectedMonthsOfYear = 0,
         [int]$ExpectedWeeksOfMonth = 0,
         [string]$ExpectedDelay = '',
-        [string]$ExpectedMsgTitle = '',
         [int]$ExpectedRepeatMins = 0,
         [string]$ExpectedRandomDelay = ''
     )
@@ -329,15 +310,9 @@ function Assert-TestTask {
         Assert-True ([int]$principal.RunLevel -eq $TASK_RUNLEVEL_LUA) ('{0} uses LeastPrivilege' -f $Name)
         Assert-True ([int]$trigger.Type -eq $ExpectedTriggerType) ('{0} trigger type correct' -f $Name)
         Assert-True ([int]$actions.Count -eq 1) ('{0} has exactly one action' -f $Name)
-        Assert-True ([int]$action.Type -eq $ExpectedActionType) ('{0} action type correct' -f $Name)
-
-        if ($ExpectedActionType -eq $TASK_ACTION_EXEC) {
-            Assert-True ([string]$action.Arguments -eq '127.0.0.1 -n 6') ('{0} arguments preserved as-is' -f $Name)
-            Assert-True ([string]$action.WorkingDirectory -eq [Environment]::GetFolderPath('LocalApplicationData')) ('{0} working directory preserved as-is' -f $Name)
-        }
-        elseif ($ExpectedActionType -eq $TASK_ACTION_SHOW_MESSAGE) {
-            Assert-True ([string]$action.Title -eq $ExpectedMsgTitle) ('{0} ShowMessage title correct' -f $Name)
-        }
+        Assert-True ([int]$action.Type -eq $TASK_ACTION_EXEC) ('{0} action type is Exec' -f $Name)
+        Assert-True ([string]$action.Arguments -eq '127.0.0.1 -n 6') ('{0} arguments preserved as-is' -f $Name)
+        Assert-True ([string]$action.WorkingDirectory -eq [Environment]::GetFolderPath('LocalApplicationData')) ('{0} working directory preserved as-is' -f $Name)
 
         # Verify trigger-specific fields.
         if ($ExpectedDaysOfWeek -ne 0) {
@@ -420,17 +395,12 @@ try {
     Register-TestTask -Name $regName -Kind Registration -Delay 'PT30S'
     Assert-TestTask -Name $regName -ExpectedTriggerType $TASK_TRIGGER_REGISTRATION -ExpectedDelay 'PT30S'
 
-    # ShowMessage action test.
-    $msgName = $uniquePrefix + '.ShowMessage'
-    Register-TestTask -Name $msgName -Kind Once -ActionType $TASK_ACTION_SHOW_MESSAGE -MsgTitle '测试标题' -MsgBody '测试消息正文'
-    Assert-TestTask -Name $msgName -ExpectedTriggerType $TASK_TRIGGER_TIME -ExpectedActionType $TASK_ACTION_SHOW_MESSAGE -ExpectedMsgTitle '测试标题'
-
     # RandomDelay test.
     $randomName = $uniquePrefix + '.RandomDelay'
     Register-TestTask -Name $randomName -Kind Once -RepeatMinutes 30 -RandomDelay 'PT5M'
     Assert-TestTask -Name $randomName -ExpectedTriggerType $TASK_TRIGGER_TIME -ExpectedRepeatMins 30 -ExpectedRandomDelay 'PT5M'
 
-    # Multi-action test: Exec + ShowMessage in one task.
+    # Multi-action test: 2 Exec actions in one task.
     $multiActionName = $uniquePrefix + '.MultiAction'
     $maDefinition = $null
     try {
@@ -448,9 +418,8 @@ try {
         $maAct1 = $maDefinition.Actions.Create($TASK_ACTION_EXEC)
         $maAct1.Path = Join-Path $env:SystemRoot 'System32\PING.EXE'
         $maAct1.Arguments = '127.0.0.1 -n 3'
-        $maAct2 = $maDefinition.Actions.Create($TASK_ACTION_SHOW_MESSAGE)
-        $maAct2.Title = 'Multi-Action Title'
-        $maAct2.MessageBody = 'Multi-Action Body'
+        $maAct2 = $maDefinition.Actions.Create($TASK_ACTION_EXEC)
+        $maAct2.Path = Join-Path $env:SystemRoot 'System32\HOSTNAME.EXE'
         [void]$root.RegisterTaskDefinition($multiActionName, $maDefinition, $TASK_CREATE, $currentSid, $null, $TASK_LOGON_INTERACTIVE_TOKEN, $null)
         $script:createdNames.Add($multiActionName)
         Clear-ComObject $maAct1; Clear-ComObject $maAct2; Clear-ComObject $maTrig
@@ -458,7 +427,7 @@ try {
         $maActions = $maTask.Definition.Actions
         Assert-True (([int]$maActions.Count) -eq 2) 'Multi-action task has 2 actions'
         Assert-True (([int]$maActions.Item(1).Type) -eq $TASK_ACTION_EXEC) 'Multi-action first action is Exec'
-        Assert-True (([int]$maActions.Item(2).Type) -eq $TASK_ACTION_SHOW_MESSAGE) 'Multi-action second action is ShowMessage'
+        Assert-True (([int]$maActions.Item(2).Type) -eq $TASK_ACTION_EXEC) 'Multi-action second action is Exec'
         Clear-ComObject $maActions; Clear-ComObject $maTask
     }
     finally {
