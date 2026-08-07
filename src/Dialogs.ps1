@@ -656,8 +656,8 @@ function Show-TaskEditor {
             $actionList = New-Object 'System.Collections.Generic.List[object]'
             foreach ($row in $script:__actionRows) {
                 $g = $row.Tag
-                $typeCombo = $g.Children[0]; $typeItem = $typeCombo.SelectedItem
-                $actType = if ($null -ne $typeItem.PSObject.Properties['Tag']) { [string]$typeItem.Tag } else { 'Exec' }
+                $typeCombo = $g.Children[0]
+                $actType = if ($typeCombo.SelectedIndex -eq 0) { 'Exec' } else { 'ShowMessage' }
                 if ($actType -eq 'Exec') {
                     # Children: 0=typeCombo, 1=removeBtn, 2=execPathLabel, 3=execPathBox, 4=execBrowseBtn,
                     #           5=execArgsLabel, 6=execArgsBox, 7=execWdLabel, 8=execWdBox
@@ -703,7 +703,7 @@ function Show-TaskEditor {
                     if (-not [DateTime]::TryParseExact($trgStartTime, 'HH:mm', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsedTime)) {
                         throw ('触发器 "{0}"：开始时间必须使用 HH:mm 格式。' -f $kind)
                     }
-                    $trgStartDt = $trgStartDate.Value.Date.Add($parsedTime.TimeOfDay)
+                    $trgStartDt = $trgStartDate.Date.Add($parsedTime.TimeOfDay)
                 }
 
                 $trgRepeatMins = 0
