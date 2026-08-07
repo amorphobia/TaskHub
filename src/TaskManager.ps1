@@ -1121,6 +1121,18 @@ function Register-TaskFromData {
             $settings.MultipleInstances = 0
         }
 
+        # ShowMessage action requires TASK_COMPATIBILITY_V2 — the element is
+        # rejected by the V2_1+ XML schemas since the action was deprecated in
+        # Windows 8.
+        if ($null -ne $Data.PSObject.Properties['Actions']) {
+            foreach ($a in $Data.Actions) {
+                if ($a.Type -eq 'ShowMessage') {
+                    $settings.Compatibility = $script:TASK_COMPATIBILITY_V2
+                    break
+                }
+            }
+        }
+
         $triggers = $definition.Triggers
         $triggers.Clear()
 
