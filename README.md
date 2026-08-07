@@ -1,6 +1,6 @@
-# UserTaskManager
+# TaskHub
 
-UserTaskManager 是一个面向普通 Windows 用户的轻量级计划任务管理器。它使用 Windows PowerShell 5.1、.NET Framework WPF 和 Task Scheduler 2.0 COM API，始终继承启动它的当前用户令牌。
+TaskHub 是一个面向普通 Windows 用户的轻量级计划任务管理器。它使用 Windows PowerShell 5.1、.NET Framework WPF 和 Task Scheduler 2.0 COM API，始终继承启动它的当前用户令牌。
 
 它不会请求管理员权限，不使用 `RunAs`，不修改 UAC、组策略、注册表安全设置或任务 ACL，也不使用 `ExecutionPolicy Bypass` 或兼容性绕过技巧。
 
@@ -21,21 +21,21 @@ UserTaskManager 是一个面向普通 Windows 用户的轻量级计划任务管�
 .\build.ps1
 ```
 
-默认输出同目录下的 `UserTaskManager.cmd`。也可以指定路径：
+默认输出同目录下的 `TaskHub.cmd`。也可以指定路径：
 
 ```powershell
-.\build.ps1 -SourcePath .\UserTaskManager.ps1 -OutputPath D:\Tools\UserTaskManager.cmd
+.\build.ps1 -OutputPath D:\Tools\TaskHub.cmd
 ```
 
-窗口和任务栏图标的设计母版保存在 `assets\UserTaskManager.svg`。构建器仅使用 Windows PowerShell 5.1 和 .NET Framework WPF 读取这个 SVG，在内存中渲染 16、20、24、32、48、64、128、256 px 的透明 PNG，随后打包为多尺寸 ICO，并将 ICO 的 Base64 注入生成的 CMD。构建过程不会向仓库写入 PNG 或 ICO；`.gitignore` 也会忽略 `assets` 下意外产生的这两类中间文件。可通过 `-IconPath` 选择兼容的 SVG 母版：
+窗口和任务栏图标的设计母版保存在 `assets\TaskHub.svg`。构建器仅使用 Windows PowerShell 5.1 和 .NET Framework WPF 读取这个 SVG，在内存中渲染 16、20、24、32、48、64、128、256 px 的透明 PNG，随后打包为多尺寸 ICO，并将 ICO 的 Base64 注入生成的 CMD。构建过程不会向仓库写入 PNG 或 ICO；`.gitignore` 也会忽略 `assets` 下意外产生的这两类中间文件。可通过 `-IconPath` 选择兼容的 SVG 母版：
 
 ```powershell
-.\build.ps1 -IconPath .\assets\UserTaskManager.svg
+.\build.ps1 -IconPath .\assets\TaskHub.svg
 ```
 
-内置渲染器有意只支持当前母版使用的 `rect`、`circle`、`line`、`path` 以及纯色填充和描边，不依赖浏览器或第三方 SVG 库。直接运行仓库中的 `UserTaskManager.ps1` 时仍可启动，但只有构建后的 CMD 包含自定义图标。
+内置渲染器有意只支持当前母版使用的 `rect`、`circle`、`line`、`path` 以及纯色填充和描边，不依赖浏览器或第三方 SVG 库。
 
-然后双击生成的 `UserTaskManager.cmd`。它是一个 CMD/PowerShell polyglot 文件：开头的批处理包装器读取同一个文件中的 PowerShell 应用代码。包装器明确调用：
+然后双击生成的 `TaskHub.cmd`。它是一个 CMD/PowerShell polyglot 文件：开头的批处理包装器读取同一个文件中的 PowerShell 应用代码。包装器明确调用：
 
 ```text
 %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoLogo -NoProfile -STA -WindowStyle Hidden -Command "..."
@@ -91,10 +91,10 @@ GUI 不提供 SYSTEM、LocalService、NetworkService、其他用户、HighestAva
 
 ## 后台应用
 
-创建或编辑任务时勾选“后台应用（无控制台窗口，记录 stdout/stderr）”。UserTaskManager 会为该任务部署：
+创建或编辑任务时勾选”后台应用（无控制台窗口，记录 stdout/stderr）”。TaskHub 会为该任务部署：
 
 ```text
-%LOCALAPPDATA%\UserTaskManager\Tasks\<完整任务路径的 SHA-256>\
+%LOCALAPPDATA%\TaskHub\Tasks\<完整任务路径的 SHA-256>\
 ├── wrapper.ps1
 ├── config.json
 └── logs\
@@ -105,7 +105,7 @@ GUI 不提供 SYSTEM、LocalService、NetworkService、其他用户、HighestAva
 
 运行目录的标识由规范化后的完整任务路径（TaskPath + TaskName，不区分大小写）计算。因而不同任务文件夹中的同名任务具有不同目录，可以同时使用后台模式；目录内的 `config.json` 还会核对完整任务路径。
 
-`wrapper.ps1` 的模板已经嵌入 `UserTaskManager.ps1`，项目目录不需要独立副本。创建任务时，程序将它释放到任务专用目录。`config.json` 分别保存目标 executable、arguments、working directory、日志目录和完整 Task Scheduler 路径。
+`wrapper.ps1` 的模板已经嵌入 `WrapperContent.ps1`，构建时与其他源文件拼接，项目目录不需要独立副本。创建任务时，程序将它释放到任务专用目录。`config.json` 分别保存目标 executable、arguments、working directory、日志目录和完整 Task Scheduler 路径。
 
 编辑器中的“日志目录（可选）”仅用于后台应用。留空时使用上述任务专用目录内的 `logs`；也可以填写或浏览选择一个绝对路径作为自定义日志目录。主窗口选择后台任务后点击“打开任务日志”，程序会从该任务的当前配置读取并打开实际目录，因此默认目录和自定义目录都适用。
 
@@ -129,21 +129,21 @@ Task Scheduler 直接跟踪这个 PowerShell 进程。包装器通过 `CreatePro
 日志路径：
 
 ```text
-%LOCALAPPDATA%\UserTaskManager\UserTaskManager.log
+%LOCALAPPDATA%\TaskHub\TaskHub.log
 ```
 
 日志记录连接、刷新、跳过的对象、成功操作及友好错误；不记录密码或敏感环境变量。用户填写的任务路径可能出现在操作和错误日志中。
 
 后台任务自己的 stdout/stderr 不写入主应用日志，而是以目标程序输出的原始字节写入默认或用户指定的任务日志目录。每次启动会重新创建 `stdout.log` 和 `stderr.log`。可在主窗口选择后台任务后点击“打开任务日志”直接访问该目录。
 
-日志何时出现仍受目标程序自身的输出缓冲策略影响。例如 Python 程序需要即时刷新时可使用 Python 自己的 `-u` 参数；UserTaskManager 不会改写目标程序的缓冲行为。
+日志何时出现仍受目标程序自身的输出缓冲策略影响。例如 Python 程序需要即时刷新时可使用 Python 自己的 `-u` 参数；TaskHub 不会改写目标程序的缓冲行为。
 
 ## 安全测试
 
 从 Windows PowerShell 5.1 运行：
 
 ```powershell
-.\Test-UserTaskManager.ps1
+.\tests\Test-TaskHub.ps1
 ```
 
 测试脚本会：
@@ -166,7 +166,7 @@ Task Scheduler 直接跟踪这个 PowerShell 进程。包装器通过 `CreatePro
 - 某些受保护系统文件夹可能完全无法枚举；这些拒绝会记入日志。
 - Task Scheduler 服务停止、被策略禁用或 COM 注册损坏时，应用只能显示错误。
 - 编辑器仅支持一个 Exec action 和一个登录/单次/每日触发器。高级任务保持只读。
-- 后台模式面向直接可执行程序。参数仍遵循目标程序自己的 Windows 命令行解析规则；UserTaskManager 不调用 `cmd.exe` 或 PowerShell 对参数做第二次解释。
+- 后台模式面向直接可执行程序。参数仍遵循目标程序自己的 Windows 命令行解析规则；TaskHub 不调用 `cmd.exe` 或 PowerShell 对参数做第二次解释。
 - 重命名或移动任务由“在目标注册，再删除原任务”完成。如果第二步被 ACL 拒绝，目标任务会保留，错误会明确说明原任务未删除。
 - 导出的任务 XML 使用 UTF-16，与 Task Scheduler COM 返回的 XML 声明一致。
 - WPF 界面需要交互式桌面会话；Windows Server Core 不支持此 GUI。
@@ -176,7 +176,7 @@ Task Scheduler 直接跟踪这个 PowerShell 进程。包装器通过 `CreatePro
 项目不提交与特定账户、任务名称或公司环境绑定的截图。发布文档需要截图时，建议将经过脱敏的主窗口截图保存为：
 
 ```text
-docs/UserTaskManager-main.png
+docs/TaskHub-main.png
 ```
 
 截图应隐藏用户名、任务路径、程序参数以及可能包含业务信息的 Description。
@@ -201,4 +201,4 @@ docs/UserTaskManager-main.png
 
 ### 程序路径、中文路径或空格参数
 
-程序使用 .NET Unicode 字符串和 Task Scheduler COM 宽字符接口。程序路径、参数和工作目录为三个独立字段；参数中的引号由目标程序解释，UserTaskManager 不进行 ANSI/GBK/UTF-8 手工转换。
+程序使用 .NET Unicode 字符串和 Task Scheduler COM 宽字符接口。程序路径、参数和工作目录为三个独立字段；参数中的引号由目标程序解释，TaskHub 不进行 ANSI/GBK/UTF-8 手工转换。
