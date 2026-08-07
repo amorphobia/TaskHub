@@ -566,6 +566,9 @@ function Invoke-WithSelectedTask {
         Write-AppLog -Message $message
         Set-Status -Text $message
         $models = @(Get-FolderTaskModels -FolderPath $script:CurrentFolderPath)
+        if ($script:ShowBackgroundOnly) {
+            $models = @(Select-BackgroundTaskModels $models)
+        }
         $script:TaskGrid.ItemsSource = $models
         Set-Status -Text $message -Count $models.Count
     }
