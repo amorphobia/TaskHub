@@ -7,14 +7,14 @@ function Show-TaskEditor {
     [xml]$editorXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="任务" Width="780" Height="950" MinWidth="700" MinHeight="800"
-        WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
+        Title="任务" Width="780" MinWidth="700" MinHeight="450" MaxHeight="950"
+        SizeToContent="Height" WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
   <Grid Margin="16">
     <Grid.RowDefinitions>
-      <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="840">
       <Grid>
         <Grid.ColumnDefinitions>
           <ColumnDefinition Width="135"/>
