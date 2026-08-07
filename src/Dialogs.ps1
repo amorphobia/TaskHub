@@ -921,6 +921,8 @@ function Show-DeleteTaskDialog {
           <Separator/>
           <Button x:Name="ViewXmlButton" Padding="12,5" Content="查看 XML"/>
           <Button x:Name="ExportXmlButton" Padding="12,5" Content="导出 XML"/>
+          <Separator/>
+          <ToggleButton x:Name="BackgroundFilterButton" Padding="12,5" Content="仅显示后台应用"/>
           <Button x:Name="OpenLogButton" Padding="12,5" Content="打开任务日志"/>
         </ToolBar>
       </ToolBarTray>
@@ -1256,6 +1258,17 @@ $script:MainWindow.FindName('OpenLogButton').Add_Click({
     finally {
         Set-Busy -Busy $false
     }
+})
+
+$script:MainWindow.FindName('BackgroundFilterButton').Add_Click({
+    $script:ShowBackgroundOnly = [bool]$this.IsChecked
+    if ($script:ShowBackgroundOnly) {
+        Set-Status -Text '已过滤：仅显示后台应用'
+    }
+    else {
+        Set-Status -Text '已取消过滤'
+    }
+    Update-All
 })
 
 $script:MainWindow.FindName('ExportXmlButton').Add_Click({

@@ -418,6 +418,9 @@ function Update-TaskList {
     try {
         $script:CurrentFolderPath = Resolve-FolderPath $FolderPath
         $models = @(Get-FolderTaskModels -FolderPath $script:CurrentFolderPath)
+        if ($script:ShowBackgroundOnly) {
+            $models = @(Select-BackgroundTaskModels $models)
+        }
         $script:TaskGrid.ItemsSource = $models
         Update-TaskDetails
         Set-Status -Text ('已刷新 {0}' -f $script:CurrentFolderPath) -Count $models.Count
@@ -442,8 +445,14 @@ function Update-All {
     Set-Busy -Busy $true -Status '正在刷新任务文件夹...'
     try {
         $errors = @(Update-FolderTree)
+        if ($script:ShowBackgroundOnly) {
+            Remove-NonBackgroundFolders
+        }
         $path = $script:CurrentFolderPath
         $models = @(Get-FolderTaskModels -FolderPath $path)
+        if ($script:ShowBackgroundOnly) {
+            $models = @(Select-BackgroundTaskModels $models)
+        }
         $script:TaskGrid.ItemsSource = $models
         Update-TaskDetails
         if ($errors.Count -gt 0) {
@@ -465,6 +474,55 @@ function Update-All {
     }
     finally {
         Set-Busy -Busy $false
+    }
+}
+
+function Select-BackgroundTaskModels {
+    param([Parameter(Mandatory = $true)][object[]]$Models)
+    $result = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($m in $Models) {
+        if ($m.Actions -like '后台应用：*') {
+            [void]$result.Add($m)
+        }
+    }
+    return $result
+}
+
+function Remove-NonBackgroundFolders {
+    $tree = $script:FolderTree
+    if ($null -eq $tree) { return }
+    $toRemove = New-Object 'System.Collections.Generic.List[Windows.Controls.TreeViewItem]'
+    $stack = New-Object 'System.Collections.Generic.Stack[Windows.Controls.TreeViewItem]'
+    foreach ($item in $tree.Items) { $stack.Push($item) }
+    while ($stack.Count -gt 0) {
+        $node = $stack.Pop()
+        foreach ($child in $node.Items) { $stack.Push($child) }
+        if ([string]$node.Tag -eq '\') { continue }
+        $nodeTasks = @(Get-FolderTaskModels -FolderPath ([string]$node.Tag))
+        $hasBackground = $false
+        foreach ($t in $nodeTasks) {
+            if ($t.Actions -like '后台应用：*') { $hasBackground = $true; break }
+        }
+        if (-not $hasBackground) { [void]$toRemove.Add($node) }
+    }
+    foreach ($node in $toRemove) {
+        if ($node.Parent -is [Windows.Controls.TreeViewItem]) {
+            [void]$node.Parent.Items.Remove($node)
+        }
+        else {
+            [void]$script:FolderTree.Items.Remove($node)
+        }
+    }
+    # Also update FolderPaths to match
+    $script:FolderPaths.Clear()
+    [void]$script:FolderPaths.Add('\')
+    $stack = New-Object 'System.Collections.Generic.Stack[Windows.Controls.TreeViewItem]'
+    foreach ($item in $script:FolderTree.Items) { $stack.Push($item) }
+    while ($stack.Count -gt 0) {
+        $node = $stack.Pop()
+        foreach ($child in $node.Items) { $stack.Push($child) }
+        $path = [string]$node.Tag
+        if ($path -ne '\') { [void]$script:FolderPaths.Add($path) }
     }
 }
 

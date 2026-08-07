@@ -42,6 +42,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 Add-Type -AssemblyName System.Windows.Forms
 
 $script:AppName = 'TaskHub'
+$script:ShowBackgroundOnly = $false
 $script:TaskService = $null
 $script:MainWindow = $null
 $script:IsBusy = $false
