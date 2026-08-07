@@ -41,7 +41,7 @@ $TASK_TRIGGER_IDLE = 6
 $TASK_TRIGGER_REGISTRATION = 7
 $TASK_TRIGGER_LOGON = 9
 $TASK_ACTION_EXEC = 0
-$TASK_ACTION_SHOW_MESSAGE = 1
+$TASK_ACTION_SHOW_MESSAGE = 7
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $currentSid = $identity.User.Value
