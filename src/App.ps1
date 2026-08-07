@@ -1,6 +1,6 @@
 #requires -version 5.1
 <#
-    UserTaskManager - a least-privilege WPF front end for Task Scheduler 2.0.
+    TaskHub - a least-privilege WPF front end for Task Scheduler 2.0.
     It deliberately uses the caller's token and never requests elevation.
 #>
 
@@ -17,7 +17,7 @@ function Restart-InStaIfNeeded {
         return $false
     }
     if ([string]::IsNullOrWhiteSpace($PSCommandPath)) {
-        throw '当前线程不是 STA，并且无法确定脚本路径。请运行 build.ps1 后使用生成的 UserTaskManager.cmd 启动。'
+        throw '当前线程不是 STA，并且无法确定脚本路径。请运行 build.ps1 后使用生成的 TaskHub.cmd 启动。'
     }
 
     $powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -41,7 +41,7 @@ if (Restart-InStaIfNeeded) {
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Xaml
 Add-Type -AssemblyName System.Windows.Forms
 
-$script:AppName = 'UserTaskManager'
+$script:AppName = 'TaskHub'
 $script:TaskService = $null
 $script:MainWindow = $null
 $script:IsBusy = $false
@@ -58,8 +58,8 @@ $script:CurrentFolderPath = '\'
 $script:CurrentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $script:CurrentSid = $script:CurrentIdentity.User.Value
 $script:CurrentUserName = $script:CurrentIdentity.Name
-$script:LogDirectory = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'UserTaskManager'
-$script:LogPath = Join-Path $script:LogDirectory 'UserTaskManager.log'
+$script:LogDirectory = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'TaskHub'
+$script:LogPath = Join-Path $script:LogDirectory 'TaskHub.log'
 $script:EmbeddedIconBase64 = '__USER_TASK_MANAGER_ICON_BASE64__'
 
 # Task Scheduler constants.

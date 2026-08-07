@@ -1,6 +1,6 @@
 #requires -version 5.1
 <#
-    Builds UserTaskManager.ps1 into a self-starting CMD/PowerShell polyglot.
+    Builds TaskHub sources into a self-starting CMD/PowerShell polyglot.
     The generated file runs with the caller's token in Windows PowerShell STA.
 #>
 
@@ -18,10 +18,10 @@ $ErrorActionPreference = 'Stop'
 
 $scriptDirectory = [IO.Path]::GetDirectoryName($MyInvocation.MyCommand.Path)
 if ([string]::IsNullOrWhiteSpace($OutputPath)) {
-    $OutputPath = Join-Path $scriptDirectory 'UserTaskManager.cmd'
+    $OutputPath = Join-Path $scriptDirectory 'TaskHub.cmd'
 }
 if ([string]::IsNullOrWhiteSpace($IconPath)) {
-    $IconPath = Join-Path $scriptDirectory 'assets\UserTaskManager.svg'
+    $IconPath = Join-Path $scriptDirectory 'assets\TaskHub.svg'
 }
 
 function Get-FullPath {
@@ -272,7 +272,7 @@ function Convert-SvgToIconBase64 {
 }
 
 $sourceFiles = @(
-    'UserTaskManager.ps1',
+    'App.ps1',
     'WrapperContent.ps1',
     'Utilities.ps1',
     'Background.ps1',

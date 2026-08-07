@@ -55,7 +55,7 @@ function Get-FriendlyError {
 function Show-ErrorMessage {
     param(
         [string]$Message,
-        [string]$Title = 'UserTaskManager'
+        [string]$Title = 'TaskHub'
     )
     Write-AppLog -Level ERROR -Message $Message
     [void][Windows.MessageBox]::Show(
@@ -70,7 +70,7 @@ function Show-ErrorMessage {
 function Show-InfoMessage {
     param(
         [string]$Message,
-        [string]$Title = 'UserTaskManager'
+        [string]$Title = 'TaskHub'
     )
     [void][Windows.MessageBox]::Show(
         $script:MainWindow,
@@ -241,7 +241,7 @@ function Get-BackgroundRuntimeDirectory {
     $runtimeDirectory = [IO.Path]::GetFullPath((Join-Path $runtimeRoot (Get-TaskPathHash $FullTaskPath)))
     $requiredPrefix = $runtimeRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     if (-not $runtimeDirectory.StartsWith($requiredPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-        throw '后台任务运行目录超出了 UserTaskManager Tasks 数据目录。'
+        throw '后台任务运行目录超出了 TaskHub Tasks 数据目录。'
     }
     return $runtimeDirectory
 }

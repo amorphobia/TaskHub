@@ -1,6 +1,6 @@
 #requires -version 5.1
 <#
-    Safe integration tests for UserTaskManager.
+    Safe integration tests for TaskHub.
     Only uniquely named tasks created by this process are touched, and all are
     deleted in finally. Existing tasks and folders are never modified.
 #>
@@ -248,7 +248,7 @@ function Register-TestTask {
     try {
         $splat = @{
             Kind = $Kind
-            Description = ('UserTaskManager safety test; unique name={0}' -f $Name)
+            Description = ('TaskHub safety test; unique name={0}' -f $Name)
             DaysOfWeek = $DaysOfWeek
             WeeksInterval = $WeeksInterval
             DaysOfMonth = $DaysOfMonth
@@ -488,7 +488,7 @@ try {
     }
 
     # Exercise the actual embedded background runner and registration functions
-    # from UserTaskManager.ps1. Only one additional GUID-named task is touched.
+    # from App.ps1. Only one additional GUID-named task is touched.
     $backgroundName = $uniquePrefix + '.Background'
     $backgroundFullPath = '\' + $backgroundName
     $backgroundFolder = $null
@@ -497,10 +497,10 @@ try {
     $backgroundRuntime = $null
     $backgroundRegistered = $false
     $backgroundProcessIds = @()
-    $backgroundCustomLogDirectory = Join-Path $env:LOCALAPPDATA ('UserTaskManager\TestLogs\{0}' -f ([Guid]::NewGuid().ToString('N')))
+    $backgroundCustomLogDirectory = Join-Path $env:LOCALAPPDATA ('TaskHub\TestLogs\{0}' -f ([Guid]::NewGuid().ToString('N')))
     $backgroundLogSentinel = Join-Path $backgroundCustomLogDirectory 'unrelated.keep'
     try {
-        $mainScriptPath = Join-Path $PSScriptRoot 'UserTaskManager.ps1'
+        $mainScriptPath = Join-Path $PSScriptRoot '..\src\App.ps1'
         . $mainScriptPath -SmokeTest | ForEach-Object { Write-Host $_ }
 
         $sourceTokens = $null
@@ -527,7 +527,7 @@ try {
             $sourceText,
             [Text.RegularExpressions.Regex]::Escape('__USER_TASK_MANAGER_ICON_BASE64__')
         ).Count -eq 1) 'Main script contains single build-time icon injection marker'
-        $iconBuildOutput = Join-Path $env:TEMP ('UserTaskManager.Test.{0}.cmd' -f ([Guid]::NewGuid().ToString('N')))
+        $iconBuildOutput = Join-Path $env:TEMP ('TaskHub.Test.{0}.cmd' -f ([Guid]::NewGuid().ToString('N')))
         & (Join-Path $PSScriptRoot 'build.ps1') -OutputPath $iconBuildOutput
         Assert-True ([IO.File]::Exists($iconBuildOutput)) 'Builder generates temporary CMD'
         $builtBytes = [IO.File]::ReadAllBytes($iconBuildOutput)
@@ -576,7 +576,7 @@ try {
         $backgroundData = [PSCustomObject]@{
             TaskPath = '\'
             TaskName = $backgroundName
-            Description = 'UserTaskManager background app safety test'
+            Description = 'TaskHub background app safety test'
             Enabled = $true
             Program = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
             Arguments = '-NoLogo -NoProfile -NonInteractive -Command "Write-Output ''user-task-manager-background-ok''; $child = [Diagnostics.Process]::Start(($env:SystemRoot + ''\System32\PING.EXE''), ''127.0.0.1 -t''); $child.WaitForExit()"'
@@ -758,7 +758,7 @@ finally {
     Clear-ComObject $service
     if (-not [string]::IsNullOrWhiteSpace($backgroundCustomLogDirectory)) {
         try {
-            $testLogRoot = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'UserTaskManager\TestLogs'))
+            $testLogRoot = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'TaskHub\TestLogs'))
             $testLogPath = [IO.Path]::GetFullPath($backgroundCustomLogDirectory)
             $requiredPrefix = $testLogRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
             if ($testLogPath.StartsWith($requiredPrefix, [StringComparison]::OrdinalIgnoreCase) -and

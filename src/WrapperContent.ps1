@@ -1,6 +1,6 @@
 # The wrapper is embedded so the project does not depend on standalone helper
 # files. Background tasks receive a private wrapper.ps1 copy under
-# %LOCALAPPDATA%\UserTaskManager\Tasks\<full-task-path-sha256>\.
+# %LOCALAPPDATA%\TaskHub\Tasks\<full-task-path-sha256>\.
 $script:BackgroundWrapperContent = @'
 #requires -version 5.1
 [CmdletBinding()]
@@ -23,7 +23,7 @@ using System.Text;
 using System.Collections;
 using System.Collections.Generic;
 
-namespace UserTaskManager
+namespace TaskHub
 {
     public static class BackgroundProcessRunner
     {
@@ -435,7 +435,7 @@ try {
 
     # The executable and raw Windows argument string are passed directly to
     # CreateProcessW. No PowerShell or cmd.exe reparsing is introduced.
-    $exitCode = [UserTaskManager.BackgroundProcessRunner]::Run(
+    $exitCode = [TaskHub.BackgroundProcessRunner]::Run(
         [string]$config.Executable,
         [string]$config.Arguments,
         [string]$config.WorkingDirectory,

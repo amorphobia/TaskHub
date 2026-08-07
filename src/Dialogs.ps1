@@ -901,7 +901,7 @@ function Show-DeleteTaskDialog {
 [xml]$mainXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="UserTaskManager - 轻量级任务计划管理器"
+        Title="TaskHub - 轻量级任务计划管理器"
         Width="1280" Height="780" MinWidth="980" MinHeight="620"
         WindowStartupLocation="CenterScreen">
   <DockPanel>
