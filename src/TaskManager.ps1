@@ -45,6 +45,37 @@ function Convert-IsoDurationToText {
     return $Duration
 }
 
+function Convert-BitmaskToString {
+    param(
+        [Parameter(Mandatory = $true)][int]$Mask,
+        [Parameter(Mandatory = $true)][string[]]$Names,
+        [Parameter(Mandatory = $true)][int[]]$Values
+    )
+    $parts = New-Object 'System.Collections.Generic.List[string]'
+    for ($i = 0; $i -lt [Math]::Min($Names.Count, $Values.Count); $i++) {
+        if (($Mask -band $Values[$i]) -ne 0) {
+            $parts.Add($Names[$i])
+        }
+    }
+    if ($parts.Count -eq 0) { return '无' }
+    return ($parts -join '、')
+}
+
+function Convert-DaysOfWeekMask {
+    param([int]$Mask)
+    return Convert-BitmaskToString -Mask $Mask -Names $script:DayOfWeekNames -Values $script:DayOfWeekMasks
+}
+
+function Convert-MonthsOfYearMask {
+    param([int]$Mask)
+    return Convert-BitmaskToString -Mask $Mask -Names $script:MonthNames -Values $script:MonthMasks
+}
+
+function Convert-WeeksOfMonthMask {
+    param([int]$Mask)
+    return Convert-BitmaskToString -Mask $Mask -Names $script:WeekOfMonthNames -Values $script:WeekOfMonthMasks
+}
+
 function Get-TriggerSummary {
     param([object]$Definition)
     $summaries = New-Object 'System.Collections.Generic.List[string]'
@@ -56,11 +87,34 @@ function Get-TriggerSummary {
                 $text = switch ([int]$trigger.Type) {
                     1 { '单次 {0}' -f (Format-TaskDate $trigger.StartBoundary) }
                     2 { '每天 {0}' -f (Format-TaskDate $trigger.StartBoundary) }
-                    3 { '每周' }
-                    4 { '每月' }
-                    5 { '每月（星期）' }
+                    3 {
+                        $days = try { Convert-DaysOfWeekMask ([int]$trigger.DaysOfWeek) } catch { '?' }
+                        $interval = try { [int]$trigger.WeeksInterval } catch { 1 }
+                        if ($interval -le 1) { '每周 {0}' -f $days }
+                        else { '每 {0} 周 {1}' -f $interval, $days }
+                    }
+                    4 {
+                        $daysOfMonth = try { Convert-BitmaskToString -Mask ([int]$trigger.DaysOfMonth) -Names ([string[]](1..31 | ForEach-Object { '{0}日' -f $_ })) -Values ([int[]](1..31 | ForEach-Object { [Math]::Pow(2, $_ - 1) })) } catch { '?' }
+                        $months = try { Convert-MonthsOfYearMask ([int]$trigger.MonthsOfYear) } catch { '' }
+                        if ($months -and $months -ne '无') { '每月 {0}（{1}）' -f $daysOfMonth, $months }
+                        else { '每月 {0}' -f $daysOfMonth }
+                    }
+                    5 {
+                        $dow = try { Convert-DaysOfWeekMask ([int]$trigger.DaysOfWeek) } catch { '?' }
+                        $weeks = try { Convert-WeeksOfMonthMask ([int]$trigger.WeeksOfMonth) } catch { '?' }
+                        $months = try { Convert-MonthsOfYearMask ([int]$trigger.MonthsOfYear) } catch { '' }
+                        $base = '每月 {0} 的 {1}' -f $weeks, $dow
+                        if ($months -and $months -ne '无') { '{0}（{1}）' -f $base, $months }
+                        else { $base }
+                    }
                     6 { '空闲时' }
-                    7 { '注册时' }
+                    7 {
+                        $delay = try { [string]$trigger.Delay } catch { '' }
+                        if (-not [string]::IsNullOrWhiteSpace($delay)) {
+                            '注册时（延迟 {0}）' -f (Convert-IsoDurationToText $delay)
+                        }
+                        else { '注册时' }
+                    }
                     8 { '启动时' }
                     9 { '用户登录时' }
                     11 { '事件触发' }
@@ -114,6 +168,9 @@ function Get-ActionSummary {
                     }
                     $summaries.Add($summary)
                 }
+                elseif ([int]$action.Type -eq $script:TASK_ACTION_SHOW_MESSAGE) {
+                    $summaries.Add(('消息：{0}' -f [string]$action.Title))
+                }
                 else {
                     $summaries.Add(('不支持的操作类型 {0}' -f $action.Type))
                 }
@@ -139,23 +196,37 @@ function Get-DisplayActionSummary {
         [Parameter(Mandatory = $true)][string]$FullTaskPath
     )
     $actions = $null
-    $action = $null
     try {
         $actions = $Definition.Actions
-        if ([int]$actions.Count -eq 1) {
-            $action = $actions.Item(1)
-            $runtimeInfo = Get-BackgroundRuntimeInfo -FullTaskPath $FullTaskPath -Action $action
-            if ($null -ne $runtimeInfo) {
-                $summary = '后台应用：' + (Format-SummaryArgument ([string]$runtimeInfo.Config.Executable))
-                if (-not [string]::IsNullOrWhiteSpace([string]$runtimeInfo.Config.Arguments)) {
-                    $summary += ' ' + [string]$runtimeInfo.Config.Arguments
+        $actCount = [int]$actions.Count
+        $actionIndex = 0
+        $backgroundSummary = ''
+        foreach ($a in @($actions)) {
+            try {
+                if ([int]$a.Type -eq $script:TASK_ACTION_EXEC) {
+                    $actionIndex++
+                    if (-not $backgroundSummary) {
+                        $runtimeInfo = Get-BackgroundRuntimeInfo -FullTaskPath $FullTaskPath -Action $a
+                        if ($null -ne $runtimeInfo) {
+                            $backgroundSummary = '后台应用：' + (Format-SummaryArgument ([string]$runtimeInfo.Config.Executable))
+                            if (-not [string]::IsNullOrWhiteSpace([string]$runtimeInfo.Config.Arguments)) {
+                                $backgroundSummary += ' ' + [string]$runtimeInfo.Config.Arguments
+                            }
+                            $backgroundSummary += '；日志：' + $runtimeInfo.LogDirectory
+                            if ($actionIndex -gt 1) {
+                                $backgroundSummary += '（操作 {0}）' -f $actionIndex
+                            }
+                        }
+                    }
                 }
-                return $summary + '；日志：' + $runtimeInfo.LogDirectory
+            }
+            finally {
+                Clear-ComObject $a
             }
         }
+        if ($backgroundSummary) { return $backgroundSummary }
     }
     finally {
-        Clear-ComObject $action
         Clear-ComObject $actions
     }
     return Get-ActionSummary $Definition
@@ -479,9 +550,22 @@ function Get-RegisteredTaskBackgroundInfo {
         $task = $folder.GetTask($parts.Name)
         $definition = $task.Definition
         $actions = $definition.Actions
-        if ([int]$actions.Count -ne 1) { return $null }
-        $action = $actions.Item(1)
-        return Get-BackgroundRuntimeInfo -FullTaskPath $FullPath -Action $action
+        # Find first Exec action and check background runtime.
+        $actCount = [int]$actions.Count
+        for ($ai = 1; $ai -le $actCount; $ai++) {
+            $a = $null
+            try {
+                $a = $actions.Item($ai)
+                if ([int]$a.Type -eq $script:TASK_ACTION_EXEC) {
+                    $action = $a
+                    return Get-BackgroundRuntimeInfo -FullTaskPath $FullPath -Action $a
+                }
+            }
+            finally {
+                if ($null -ne $a -and $a -ne $action) { Clear-ComObject $a }
+            }
+        }
+        return $null
     }
     finally {
         Clear-ComObject $action
@@ -572,23 +656,58 @@ function Get-TaskEditData {
         $principal = $definition.Principal
 
         $reasons = New-Object 'System.Collections.Generic.List[string]'
-        if ([int]$actions.Count -ne 1) {
-            $reasons.Add('操作数量不是 1')
+
+        # Per-action validation (replaces the old single-action gate).
+        $actionCount = [int]$actions.Count
+        if ($actionCount -eq 0) {
+            $reasons.Add('任务没有操作')
         }
         else {
-            $action = $actions.Item(1)
-            if ([int]$action.Type -ne $script:TASK_ACTION_EXEC) {
-                $reasons.Add('操作不是 Exec 程序操作')
+            for ($aIdx = 1; $aIdx -le $actionCount; $aIdx++) {
+                $a = $null
+                try {
+                    $a = $actions.Item($aIdx)
+                    $aType = [int]$a.Type
+                    if ($aType -ne $script:TASK_ACTION_EXEC -and $aType -ne $script:TASK_ACTION_SHOW_MESSAGE) {
+                        $reasons.Add(('操作 {0} 的类型不支持' -f $aIdx))
+                    }
+                }
+                catch {
+                    $reasons.Add(('无法读取操作 {0}' -f $aIdx))
+                }
+                finally {
+                    Clear-ComObject $a
+                }
             }
         }
 
-        if ([int]$triggers.Count -ne 1) {
-            $reasons.Add('触发器数量不是 1')
+        # Per-trigger validation (replaces the old single-trigger gate).
+        $triggerCount = [int]$triggers.Count
+        if ($triggerCount -eq 0) {
+            $reasons.Add('任务没有触发器')
         }
         else {
-            $trigger = $triggers.Item(1)
-            if (@($script:TASK_TRIGGER_TIME, $script:TASK_TRIGGER_DAILY, $script:TASK_TRIGGER_LOGON) -notcontains [int]$trigger.Type) {
-                $reasons.Add('触发器类型不受支持')
+            $allowedEditTriggerTypes = @(
+                $script:TASK_TRIGGER_TIME, $script:TASK_TRIGGER_DAILY,
+                $script:TASK_TRIGGER_WEEKLY, $script:TASK_TRIGGER_MONTHLY,
+                $script:TASK_TRIGGER_MONTHLYDOW, $script:TASK_TRIGGER_IDLE,
+                $script:TASK_TRIGGER_REGISTRATION, $script:TASK_TRIGGER_LOGON
+            )
+            for ($tIdx = 1; $tIdx -le $triggerCount; $tIdx++) {
+                $t = $null
+                try {
+                    $t = $triggers.Item($tIdx)
+                    $tType = [int]$t.Type
+                    if ($allowedEditTriggerTypes -notcontains $tType) {
+                        $reasons.Add(('触发器 {0} 的类型不支持' -f $tIdx))
+                    }
+                }
+                catch {
+                    $reasons.Add(('无法读取触发器 {0}' -f $tIdx))
+                }
+                finally {
+                    Clear-ComObject $t
+                }
             }
         }
 
@@ -604,40 +723,34 @@ function Get-TaskEditData {
         $ns = New-Object Xml.XmlNamespaceManager($xml.NameTable)
         $ns.AddNamespace('t', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
         $unsupportedTriggerNodes = @($xml.SelectNodes(
-            '/t:Task/t:Triggers/*[not(self::t:TimeTrigger or self::t:CalendarTrigger or self::t:LogonTrigger)]',
+            '/t:Task/t:Triggers/*[not(self::t:TimeTrigger or self::t:CalendarTrigger or self::t:LogonTrigger or self::t:IdleTrigger or self::t:RegistrationTrigger)]',
             $ns
         ))
         if ($unsupportedTriggerNodes.Count -gt 0) {
             $reasons.Add('XML 中包含高级触发器')
         }
         $unsupportedActionNodes = @($xml.SelectNodes(
-            '/t:Task/t:Actions/*[not(self::t:Exec)]',
+            '/t:Task/t:Actions/*[not(self::t:Exec or self::t:ShowMessage)]',
             $ns
         ))
         if ($unsupportedActionNodes.Count -gt 0) {
             $reasons.Add('XML 中包含 COM Handler、邮件或其他高级操作')
         }
-        $triggerNode = $xml.SelectSingleNode('/t:Task/t:Triggers/*', $ns)
-        if ($null -ne $triggerNode) {
-            $allowedTriggerChildren = switch ($triggerNode.LocalName) {
-                'TimeTrigger' { @('Repetition', 'StartBoundary', 'Enabled') }
-                'CalendarTrigger' { @('Repetition', 'StartBoundary', 'Enabled', 'ScheduleByDay') }
-                'LogonTrigger' { @('StartBoundary', 'EndBoundary', 'Enabled', 'UserId') }
+        foreach ($trNode in @($xml.SelectNodes('/t:Task/t:Triggers/*', $ns))) {
+            $allowedTriggerChildren = switch ($trNode.LocalName) {
+                'TimeTrigger'     { @('Repetition', 'StartBoundary', 'Enabled') }
+                'CalendarTrigger' { @('Repetition', 'StartBoundary', 'Enabled',
+                                      'ScheduleByDay', 'ScheduleByWeek',
+                                      'ScheduleByMonth', 'ScheduleByMonthDayOfWeek') }
+                'LogonTrigger'    { @('StartBoundary', 'EndBoundary', 'Enabled', 'UserId') }
+                'IdleTrigger'     { @('Repetition', 'StartBoundary', 'EndBoundary', 'Enabled') }
+                'RegistrationTrigger' { @('Repetition', 'StartBoundary', 'EndBoundary', 'Enabled', 'Delay') }
                 default { @() }
             }
-            foreach ($child in @($triggerNode.ChildNodes)) {
+            foreach ($child in @($trNode.ChildNodes)) {
                 if ($child.NodeType -eq [Xml.XmlNodeType]::Element -and
                     $allowedTriggerChildren -notcontains $child.LocalName) {
                     $reasons.Add(('触发器属性 {0} 不受支持' -f $child.LocalName))
-                }
-            }
-            if ($triggerNode.LocalName -eq 'CalendarTrigger') {
-                $calendarChildren = @($triggerNode.SelectNodes(
-                    't:ScheduleByDay/*[not(self::t:DaysInterval)]',
-                    $ns
-                ))
-                if ($calendarChildren.Count -gt 0) {
-                    $reasons.Add('日历触发器包含非每日计划')
                 }
             }
         }
@@ -658,9 +771,26 @@ function Get-TaskEditData {
             }
         }
 
-        if ($null -ne $action) {
-            $backgroundInfo = Get-BackgroundRuntimeInfo -FullTaskPath $FullPath -Action $action
-            if ($null -eq $backgroundInfo -and (Test-ActionTargetsBackgroundRunner -FullTaskPath $FullPath -Action $action)) {
+        # Check background runtime on the first Exec action (was single-action).
+        $action = $null
+        $firstExecAction = $null
+        $firstExecIndex = -1
+        for ($aIdx = 1; $aIdx -le $actionCount; $aIdx++) {
+            $a = $null
+            try {
+                $a = $actions.Item($aIdx)
+                if ([int]$a.Type -eq $script:TASK_ACTION_EXEC) {
+                    $firstExecAction = $a
+                    $firstExecIndex = $aIdx
+                    break
+                }
+            }
+            finally { if ($null -ne $a -and $a -ne $firstExecAction) { Clear-ComObject $a } }
+        }
+        if ($null -ne $firstExecAction) {
+            $action = $firstExecAction
+            $backgroundInfo = Get-BackgroundRuntimeInfo -FullTaskPath $FullPath -Action $firstExecAction
+            if ($null -eq $backgroundInfo -and (Test-ActionTargetsBackgroundRunner -FullTaskPath $FullPath -Action $firstExecAction)) {
                 $reasons.Add('后台运行配置缺失或与任务路径不匹配')
             }
         }
@@ -672,33 +802,134 @@ function Get-TaskEditData {
             }
         }
 
-        $triggerKind = switch ([int]$trigger.Type) {
-            9 { '登录时' }
-            2 { '每天' }
-            default { '单次' }
-        }
-        $start = Get-Date
-        if ([int]$trigger.Type -ne $script:TASK_TRIGGER_LOGON) {
-            try { $start = [DateTime]$trigger.StartBoundary } catch {}
-        }
-        $repeatMinutes = 0
-        try {
-            $interval = [string]$trigger.Repetition.Interval
-            if ($interval -match '^PT(\d+)M$') {
-                $repeatMinutes = [int]$matches[1]
-            }
-            elseif (-not [string]::IsNullOrWhiteSpace($interval)) {
-                return [PSCustomObject]@{
-                    Supported = $false
-                    Reason = '包含不支持的高级配置：重复间隔无法由编辑器表示。'
+        # --- Build Actions[] array from all registered actions ---
+        $actionList = New-Object 'System.Collections.Generic.List[object]'
+        for ($aIdx = 1; $aIdx -le $actionCount; $aIdx++) {
+            $a = $null
+            try {
+                $a = $actions.Item($aIdx)
+                $aType = [int]$a.Type
+                if ($aType -eq $script:TASK_ACTION_EXEC) {
+                    $aProgram = [string]$a.Path
+                    $aArgs = [string]$a.Arguments
+                    $aWd = [string]$a.WorkingDirectory
+                    # Check if this specific Exec action is a background app.
+                    $aBgInfo = Get-BackgroundRuntimeInfo -FullTaskPath $FullPath -Action $a
+                    if ($null -ne $aBgInfo) {
+                        $aProgram = [string]$aBgInfo.Config.Executable
+                        $aArgs = [string]$aBgInfo.Config.Arguments
+                        $aWd = [string]$aBgInfo.Config.WorkingDirectory
+                    }
+                    $actionList.Add([PSCustomObject]@{
+                        Type = 'Exec'
+                        Program = $aProgram
+                        Arguments = $aArgs
+                        WorkingDirectory = $aWd
+                        Title = ''
+                        MessageBody = ''
+                    })
+                }
+                elseif ($aType -eq $script:TASK_ACTION_SHOW_MESSAGE) {
+                    $actionList.Add([PSCustomObject]@{
+                        Type = 'ShowMessage'
+                        Program = ''
+                        Arguments = ''
+                        WorkingDirectory = ''
+                        Title = [string]$a.Title
+                        MessageBody = [string]$a.MessageBody
+                    })
                 }
             }
+            catch {
+                $actionList.Add([PSCustomObject]@{
+                    Type = 'Unknown'
+                    Program = ''; Arguments = ''; WorkingDirectory = ''
+                    Title = ''; MessageBody = ''
+                })
+            }
+            finally {
+                if ($null -ne $a -and $a -ne $firstExecAction) { Clear-ComObject $a }
+            }
         }
-        catch {}
 
-        $displayProgram = [string]$action.Path
-        $displayArguments = [string]$action.Arguments
-        $displayWorkingDirectory = [string]$action.WorkingDirectory
+        # --- Build Triggers[] array from all registered triggers ---
+        $triggerList = New-Object 'System.Collections.Generic.List[object]'
+        for ($tIdx = 1; $tIdx -le $triggerCount; $tIdx++) {
+            $t = $null
+            try {
+                $t = $triggers.Item($tIdx)
+                $tType = [int]$t.Type
+                $tKind = switch ($tType) {
+                    1 { '单次' }
+                    2 { '每天' }
+                    3 { '每周' }
+                    4 { '每月' }
+                    5 { '每月（星期）' }
+                    6 { '空闲时' }
+                    7 { '注册时' }
+                    9 { '登录时' }
+                    default { '单次' }
+                }
+                $tStart = Get-Date
+                if ($tType -notin @($script:TASK_TRIGGER_LOGON, $script:TASK_TRIGGER_IDLE, $script:TASK_TRIGGER_REGISTRATION)) {
+                    try { $tStart = [DateTime]$t.StartBoundary } catch {}
+                }
+                $tRepeatMins = 0
+                $tRandomDelay = ''
+                try {
+                    $tInterval = [string]$t.Repetition.Interval
+                    if ($tInterval -match '^PT(\d+)M$') { $tRepeatMins = [int]$matches[1] }
+                    $tRandomDelay = try { [string]$t.Repetition.RandomDelay } catch { '' }
+                }
+                catch {}
+
+                $tDaysOfWeek = try { [int]$t.DaysOfWeek } catch { 0 }
+                $tWeeksInterval = try { [int]$t.WeeksInterval } catch { 1 }
+                $tDaysOfMonth = try { [int]$t.DaysOfMonth } catch { 0 }
+                $tMonthsOfYear = try { [int]$t.MonthsOfYear } catch { 0 }
+                $tWeeksOfMonth = try { [int]$t.WeeksOfMonth } catch { 0 }
+                $tDelay = try { [string]$t.Delay } catch { '' }
+
+                $triggerList.Add([PSCustomObject]@{
+                    Kind = $tKind
+                    StartDate = $tStart.Date
+                    StartTime = $tStart.ToString('HH:mm')
+                    RepeatMinutes = $tRepeatMins
+                    RandomDelay = $tRandomDelay
+                    DaysOfWeek = $tDaysOfWeek
+                    WeeksInterval = $tWeeksInterval
+                    DaysOfMonth = $tDaysOfMonth
+                    MonthsOfYear = $tMonthsOfYear
+                    WeeksOfMonth = $tWeeksOfMonth
+                    Delay = $tDelay
+                })
+            }
+            catch {
+                $triggerList.Add([PSCustomObject]@{
+                    Kind = '单次'
+                    StartDate = (Get-Date).Date; StartTime = '00:00'
+                    RepeatMinutes = 0; RandomDelay = ''
+                    DaysOfWeek = 0; WeeksInterval = 1
+                    DaysOfMonth = 0; MonthsOfYear = 0; WeeksOfMonth = 0
+                    Delay = ''
+                })
+            }
+            finally {
+                Clear-ComObject $t
+            }
+        }
+
+        # --- Scalar fields (first action / first trigger, for backward compat) ---
+        $firstAction = if ($actionList.Count -gt 0) { $actionList[0] } else { $null }
+        $firstTrigger = if ($triggerList.Count -gt 0) { $triggerList[0] } else { $null }
+
+        $displayProgram = if ($firstAction) { $firstAction.Program } else { '' }
+        $displayArguments = if ($firstAction) { $firstAction.Arguments } else { '' }
+        $displayWorkingDirectory = if ($firstAction) { $firstAction.WorkingDirectory } else { '' }
+        $triggerKind = if ($firstTrigger) { $firstTrigger.Kind } else { '单次' }
+        $start = if ($firstTrigger) { $firstTrigger.StartDate.Date.Add([TimeSpan]::Parse($firstTrigger.StartTime)) } else { Get-Date }
+        $repeatMinutes = if ($firstTrigger) { $firstTrigger.RepeatMinutes } else { 0 }
+
         $backgroundMode = $false
         $displayLogDirectory = ''
         $displayEnvironment = $null
@@ -732,10 +963,12 @@ function Get-TaskEditData {
             StartDate = $start.Date
             StartTime = $start.ToString('HH:mm')
             RepeatMinutes = $repeatMinutes
+            Actions = [object[]]$actionList
+            Triggers = [object[]]$triggerList
         }
     }
     finally {
-        Clear-ComObject $trigger
+        Clear-ComObject $firstExecAction
         Clear-ComObject $action
         Clear-ComObject $principal
         Clear-ComObject $triggers
@@ -836,9 +1069,20 @@ function Register-TaskFromData {
             $definition = $sourceTask.Definition
             try {
                 $sourceActionsForRuntime = $definition.Actions
-                if ([int]$sourceActionsForRuntime.Count -eq 1) {
-                    $sourceActionForRuntime = $sourceActionsForRuntime.Item(1)
-                    $oldRuntimeInfo = Get-BackgroundRuntimeInfo -FullTaskPath $OriginalFullPath -Action $sourceActionForRuntime
+                $srcActCount = [int]$sourceActionsForRuntime.Count
+                for ($sai = 1; $sai -le $srcActCount; $sai++) {
+                    $sa = $null
+                    try {
+                        $sa = $sourceActionsForRuntime.Item($sai)
+                        if ([int]$sa.Type -eq $script:TASK_ACTION_EXEC) {
+                            $sourceActionForRuntime = $sa
+                            $oldRuntimeInfo = Get-BackgroundRuntimeInfo -FullTaskPath $OriginalFullPath -Action $sa
+                            break
+                        }
+                    }
+                    finally {
+                        if ($null -ne $sa -and $sa -ne $sourceActionForRuntime) { Clear-ComObject $sa }
+                    }
                 }
             }
             finally {
@@ -879,29 +1123,96 @@ function Register-TaskFromData {
 
         $triggers = $definition.Triggers
         $triggers.Clear()
-        switch ($Data.TriggerKind) {
-            '登录时' {
-                $trigger = $triggers.Create($script:TASK_TRIGGER_LOGON)
+
+        $triggerList = @()
+        if ($null -ne $Data.PSObject.Properties['Triggers'] -and $Data.Triggers.Count -gt 0) {
+            $triggerList = @($Data.Triggers)
+        }
+        else {
+            # Backward compat: synthesize from scalar fields.
+            $triggerList = @([PSCustomObject]@{
+                Kind = [string]$Data.TriggerKind
+                StartDate = $Data.StartDateTime.Date
+                StartTime = $Data.StartDateTime.ToString('HH:mm')
+                RepeatMinutes = [int]$Data.RepeatMinutes
+                RandomDelay = ''
+                DaysOfWeek = 0; WeeksInterval = 1
+                DaysOfMonth = 0; MonthsOfYear = 0; WeeksOfMonth = 0
+                Delay = ''
+            })
+        }
+
+        foreach ($trgData in $triggerList) {
+            $triggerType = switch ($trgData.Kind) {
+                '登录时' { $script:TASK_TRIGGER_LOGON }
+                '每天'   { $script:TASK_TRIGGER_DAILY }
+                '每周'   { $script:TASK_TRIGGER_WEEKLY }
+                '每月'   { $script:TASK_TRIGGER_MONTHLY }
+                '每月（星期）' { $script:TASK_TRIGGER_MONTHLYDOW }
+                '空闲时' { $script:TASK_TRIGGER_IDLE }
+                '注册时' { $script:TASK_TRIGGER_REGISTRATION }
+                default  { $script:TASK_TRIGGER_TIME }
+            }
+            $trigger = $triggers.Create($triggerType)
+            $trigger.Enabled = $true
+
+            if ($trgData.Kind -eq '登录时') {
                 $trigger.UserId = $script:CurrentSid
             }
-            '每天' {
-                $trigger = $triggers.Create($script:TASK_TRIGGER_DAILY)
-                $trigger.StartBoundary = $Data.StartDateTime.ToString('yyyy-MM-ddTHH:mm:ss')
-                $trigger.DaysInterval = 1
+            elseif ($trgData.Kind -eq '注册时') {
+                if (-not [string]::IsNullOrWhiteSpace([string]$trgData.Delay)) {
+                    $trigger.Delay = [string]$trgData.Delay
+                }
             }
-            default {
-                $trigger = $triggers.Create($script:TASK_TRIGGER_TIME)
-                $trigger.StartBoundary = $Data.StartDateTime.ToString('yyyy-MM-ddTHH:mm:ss')
+            elseif ($trgData.Kind -ne '空闲时') {
+                # Time-based triggers: set StartBoundary.
+                $startDt = $trgData.StartDate.Date.Add([TimeSpan]::Parse($trgData.StartTime))
+                $trigger.StartBoundary = $startDt.ToString('yyyy-MM-ddTHH:mm:ss')
             }
-        }
-        $trigger.Enabled = $true
 
-        if ([int]$Data.RepeatMinutes -gt 0 -and $Data.TriggerKind -ne '登录时') {
-            $repetition = $trigger.Repetition
-            $repetition.Interval = Convert-MinutesToIsoDuration ([int]$Data.RepeatMinutes)
-            $repetition.Duration = if ($Data.TriggerKind -eq '每天') { 'P1D' } else { 'P7D' }
-            $repetition.StopAtDurationEnd = $false
+            # Type-specific sub-fields.
+            switch ($triggerType) {
+                $script:TASK_TRIGGER_DAILY { $trigger.DaysInterval = 1 }
+                $script:TASK_TRIGGER_WEEKLY {
+                    if ([int]$trgData.DaysOfWeek -ne 0) { $trigger.DaysOfWeek = [int]$trgData.DaysOfWeek }
+                    if ([int]$trgData.WeeksInterval -gt 0) { $trigger.WeeksInterval = [int]$trgData.WeeksInterval }
+                }
+                $script:TASK_TRIGGER_MONTHLY {
+                    if ([int]$trgData.DaysOfMonth -ne 0) { $trigger.DaysOfMonth = [int]$trgData.DaysOfMonth }
+                    if ([int]$trgData.MonthsOfYear -ne 0) { $trigger.MonthsOfYear = [int]$trgData.MonthsOfYear }
+                }
+                $script:TASK_TRIGGER_MONTHLYDOW {
+                    if ([int]$trgData.DaysOfWeek -ne 0) { $trigger.DaysOfWeek = [int]$trgData.DaysOfWeek }
+                    if ([int]$trgData.WeeksOfMonth -ne 0) { $trigger.WeeksOfMonth = [int]$trgData.WeeksOfMonth }
+                    if ([int]$trgData.MonthsOfYear -ne 0) { $trigger.MonthsOfYear = [int]$trgData.MonthsOfYear }
+                }
+            }
+
+            # Repetition.
+            $repeatMins = [int]$trgData.RepeatMinutes
+            if ($repeatMins -gt 0 -and $trgData.Kind -notin @('登录时', '空闲时', '注册时')) {
+                $repetition = $trigger.Repetition
+                $repetition.Interval = Convert-MinutesToIsoDuration $repeatMins
+                $repetition.StopAtDurationEnd = $false
+                if ($trgData.Kind -in @('每天', '每周')) {
+                    $repetition.Duration = 'P1D'
+                }
+                elseif ($trgData.Kind -in @('每月', '每月（星期）')) {
+                    $repetition.Duration = 'P31D'
+                }
+                else {
+                    $repetition.Duration = 'P7D'
+                }
+                if (-not [string]::IsNullOrWhiteSpace([string]$trgData.RandomDelay)) {
+                    $repetition.RandomDelay = [string]$trgData.RandomDelay
+                }
+            }
+
+            Clear-ComObject $repetition
+            $repetition = $null
+            Clear-ComObject $trigger
         }
+        $trigger = $null
 
         $fullPath = Join-TaskFullPath $Data.TaskPath $Data.TaskName
         $effectiveProgram = [string]$Data.Program
@@ -916,10 +1227,46 @@ function Register-TaskFromData {
 
         $actions = $definition.Actions
         $actions.Clear()
-        $action = $actions.Create($script:TASK_ACTION_EXEC)
-        $action.Path = $effectiveProgram
-        $action.Arguments = $effectiveArguments
-        $action.WorkingDirectory = $effectiveWorkingDirectory
+
+        $actionList = @()
+        if ($null -ne $Data.PSObject.Properties['Actions'] -and $Data.Actions.Count -gt 0) {
+            $actionList = @($Data.Actions)
+        }
+        else {
+            # Backward compat: synthesize from scalar fields.
+            $actionList = @([PSCustomObject]@{
+                Type = 'Exec'
+                Program = [string]$Data.Program
+                Arguments = [string]$Data.Arguments
+                WorkingDirectory = [string]$Data.WorkingDirectory
+                Title = ''; MessageBody = ''
+            })
+        }
+
+        $firstExecIndex = -1
+        for ($i = 0; $i -lt $actionList.Count; $i++) {
+            $actData = $actionList[$i]
+            if ($actData.Type -eq 'Exec') {
+                $action = $actions.Create($script:TASK_ACTION_EXEC)
+                if ($backgroundMode -and $firstExecIndex -lt 0) {
+                    $action.Path = $backgroundInstallState.Values.ActionPath
+                    $action.Arguments = $backgroundInstallState.Values.ActionArguments
+                    $action.WorkingDirectory = $backgroundInstallState.Values.RuntimeDirectory
+                    $firstExecIndex = $i
+                }
+                else {
+                    $action.Path = [string]$actData.Program
+                    $action.Arguments = [string]$actData.Arguments
+                    $action.WorkingDirectory = [string]$actData.WorkingDirectory
+                }
+            }
+            elseif ($actData.Type -eq 'ShowMessage') {
+                $action = $actions.Create($script:TASK_ACTION_SHOW_MESSAGE)
+                $action.Title = [string]$actData.Title
+                $action.MessageBody = [string]$actData.MessageBody
+            }
+        }
+        $action = $null
 
         $flags = $script:TASK_CREATE
         if ($Data.Overwrite) {

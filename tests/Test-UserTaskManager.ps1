@@ -34,8 +34,14 @@ $TASK_LOGON_INTERACTIVE_TOKEN = 3
 $TASK_RUNLEVEL_LUA = 0
 $TASK_TRIGGER_TIME = 1
 $TASK_TRIGGER_DAILY = 2
+$TASK_TRIGGER_WEEKLY = 3
+$TASK_TRIGGER_MONTHLY = 4
+$TASK_TRIGGER_MONTHLYDOW = 5
+$TASK_TRIGGER_IDLE = 6
+$TASK_TRIGGER_REGISTRATION = 7
 $TASK_TRIGGER_LOGON = 9
 $TASK_ACTION_EXEC = 0
+$TASK_ACTION_SHOW_MESSAGE = 1
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $currentSid = $identity.User.Value
@@ -114,9 +120,20 @@ function Read-SharedLogText {
 
 function New-TestDefinition {
     param(
-        [ValidateSet('Logon', 'Once', 'Daily')]
+        [ValidateSet('Logon', 'Once', 'Daily', 'Weekly', 'Monthly', 'MonthlyDOW', 'Idle', 'Registration')]
         [string]$Kind,
-        [string]$Description
+        [string]$Description,
+        [int]$ActionType = $TASK_ACTION_EXEC,
+        [string]$MsgTitle = '',
+        [string]$MsgBody = '',
+        [int]$DaysOfWeek = 0,
+        [int]$WeeksInterval = 1,
+        [int]$DaysOfMonth = 0,
+        [int]$MonthsOfYear = 0,
+        [int]$WeeksOfMonth = 0,
+        [string]$Delay = '',
+        [int]$RepeatMinutes = 0,
+        [string]$RandomDelay = ''
     )
     $definition = $null
     $registrationInfo = $null
@@ -124,6 +141,7 @@ function New-TestDefinition {
     $settings = $null
     $triggers = $null
     $trigger = $null
+    $repetition = $null
     $actions = $null
     $action = $null
     try {
@@ -155,6 +173,32 @@ function New-TestDefinition {
                 $trigger.StartBoundary = (Get-Date).Date.AddDays(1).AddHours(9).ToString('yyyy-MM-ddTHH:mm:ss')
                 $trigger.DaysInterval = 1
             }
+            'Weekly' {
+                $trigger = $triggers.Create($TASK_TRIGGER_WEEKLY)
+                $trigger.StartBoundary = (Get-Date).Date.AddDays(1).AddHours(9).ToString('yyyy-MM-ddTHH:mm:ss')
+                $trigger.DaysOfWeek = $DaysOfWeek
+                $trigger.WeeksInterval = $WeeksInterval
+            }
+            'Monthly' {
+                $trigger = $triggers.Create($TASK_TRIGGER_MONTHLY)
+                $trigger.StartBoundary = (Get-Date).Date.AddDays(1).AddHours(9).ToString('yyyy-MM-ddTHH:mm:ss')
+                $trigger.DaysOfMonth = $DaysOfMonth
+                if ($MonthsOfYear -ne 0) { $trigger.MonthsOfYear = $MonthsOfYear }
+            }
+            'MonthlyDOW' {
+                $trigger = $triggers.Create($TASK_TRIGGER_MONTHLYDOW)
+                $trigger.StartBoundary = (Get-Date).Date.AddDays(1).AddHours(9).ToString('yyyy-MM-ddTHH:mm:ss')
+                $trigger.DaysOfWeek = $DaysOfWeek
+                $trigger.WeeksOfMonth = $WeeksOfMonth
+                if ($MonthsOfYear -ne 0) { $trigger.MonthsOfYear = $MonthsOfYear }
+            }
+            'Idle' {
+                $trigger = $triggers.Create($TASK_TRIGGER_IDLE)
+            }
+            'Registration' {
+                $trigger = $triggers.Create($TASK_TRIGGER_REGISTRATION)
+                if ($Delay) { $trigger.Delay = $Delay }
+            }
             'Once' {
                 $trigger = $triggers.Create($TASK_TRIGGER_TIME)
                 $trigger.StartBoundary = (Get-Date).AddHours(1).ToString('yyyy-MM-ddTHH:mm:ss')
@@ -162,17 +206,32 @@ function New-TestDefinition {
         }
         $trigger.Enabled = $true
 
+        if ($RepeatMinutes -gt 0) {
+            $repetition = $trigger.Repetition
+            $repetition.Interval = 'PT{0}M' -f $RepeatMinutes
+            $repetition.Duration = 'P1D'
+            if ($RandomDelay) { $repetition.RandomDelay = $RandomDelay }
+        }
+
         $actions = $definition.Actions
-        $action = $actions.Create($TASK_ACTION_EXEC)
-        $action.Path = Join-Path $env:SystemRoot 'System32\PING.EXE'
-        $action.Arguments = '127.0.0.1 -n 6'
-        $action.WorkingDirectory = [Environment]::GetFolderPath('LocalApplicationData')
+        if ($ActionType -eq $TASK_ACTION_SHOW_MESSAGE) {
+            $action = $actions.Create($TASK_ACTION_SHOW_MESSAGE)
+            $action.Title = $MsgTitle
+            $action.MessageBody = $MsgBody
+        }
+        else {
+            $action = $actions.Create($TASK_ACTION_EXEC)
+            $action.Path = Join-Path $env:SystemRoot 'System32\PING.EXE'
+            $action.Arguments = '127.0.0.1 -n 6'
+            $action.WorkingDirectory = [Environment]::GetFolderPath('LocalApplicationData')
+        }
 
         return $definition
     }
     finally {
         Clear-ComObject $action
         Clear-ComObject $actions
+        Clear-ComObject $repetition
         Clear-ComObject $trigger
         Clear-ComObject $triggers
         Clear-ComObject $settings
@@ -185,12 +244,38 @@ function New-TestDefinition {
 function Register-TestTask {
     param(
         [string]$Name,
-        [ValidateSet('Logon', 'Once', 'Daily')][string]$Kind
+        [ValidateSet('Logon', 'Once', 'Daily', 'Weekly', 'Monthly', 'MonthlyDOW', 'Idle', 'Registration')][string]$Kind,
+        [int]$ActionType = $TASK_ACTION_EXEC,
+        [string]$MsgTitle = '',
+        [string]$MsgBody = '',
+        [int]$DaysOfWeek = 0,
+        [int]$WeeksInterval = 1,
+        [int]$DaysOfMonth = 0,
+        [int]$MonthsOfYear = 0,
+        [int]$WeeksOfMonth = 0,
+        [string]$Delay = '',
+        [int]$RepeatMinutes = 0,
+        [string]$RandomDelay = ''
     )
     $definition = $null
     $task = $null
     try {
-        $definition = New-TestDefinition -Kind $Kind -Description ('UserTaskManager safety test; unique name={0}' -f $Name)
+        $splat = @{
+            Kind = $Kind
+            Description = ('UserTaskManager safety test; unique name={0}' -f $Name)
+            ActionType = $ActionType
+            MsgTitle = $MsgTitle
+            MsgBody = $MsgBody
+            DaysOfWeek = $DaysOfWeek
+            WeeksInterval = $WeeksInterval
+            DaysOfMonth = $DaysOfMonth
+            MonthsOfYear = $MonthsOfYear
+            WeeksOfMonth = $WeeksOfMonth
+            Delay = $Delay
+            RepeatMinutes = $RepeatMinutes
+            RandomDelay = $RandomDelay
+        }
+        $definition = New-TestDefinition @splat
         $task = $script:root.RegisterTaskDefinition(
             $Name,
             $definition,
@@ -212,7 +297,17 @@ function Register-TestTask {
 function Assert-TestTask {
     param(
         [string]$Name,
-        [int]$ExpectedTriggerType
+        [int]$ExpectedTriggerType,
+        [int]$ExpectedActionType = $TASK_ACTION_EXEC,
+        [int]$ExpectedDaysOfWeek = 0,
+        [int]$ExpectedWeeksInterval = 1,
+        [int]$ExpectedDaysOfMonth = 0,
+        [int]$ExpectedMonthsOfYear = 0,
+        [int]$ExpectedWeeksOfMonth = 0,
+        [string]$ExpectedDelay = '',
+        [string]$ExpectedMsgTitle = '',
+        [int]$ExpectedRepeatMins = 0,
+        [string]$ExpectedRandomDelay = ''
     )
     $task = $null
     $definition = $null
@@ -233,9 +328,42 @@ function Assert-TestTask {
         Assert-True ([int]$principal.LogonType -eq $TASK_LOGON_INTERACTIVE_TOKEN) ('{0} uses InteractiveToken' -f $Name)
         Assert-True ([int]$principal.RunLevel -eq $TASK_RUNLEVEL_LUA) ('{0} uses LeastPrivilege' -f $Name)
         Assert-True ([int]$trigger.Type -eq $ExpectedTriggerType) ('{0} trigger type correct' -f $Name)
-        Assert-True ([int]$actions.Count -eq 1 -and [int]$action.Type -eq $TASK_ACTION_EXEC) ('{0} has exactly one Exec action' -f $Name)
-        Assert-True ([string]$action.Arguments -eq '127.0.0.1 -n 6') ('{0} arguments preserved as-is' -f $Name)
-        Assert-True ([string]$action.WorkingDirectory -eq [Environment]::GetFolderPath('LocalApplicationData')) ('{0} working directory preserved as-is' -f $Name)
+        Assert-True ([int]$actions.Count -eq 1) ('{0} has exactly one action' -f $Name)
+        Assert-True ([int]$action.Type -eq $ExpectedActionType) ('{0} action type correct' -f $Name)
+
+        if ($ExpectedActionType -eq $TASK_ACTION_EXEC) {
+            Assert-True ([string]$action.Arguments -eq '127.0.0.1 -n 6') ('{0} arguments preserved as-is' -f $Name)
+            Assert-True ([string]$action.WorkingDirectory -eq [Environment]::GetFolderPath('LocalApplicationData')) ('{0} working directory preserved as-is' -f $Name)
+        }
+        elseif ($ExpectedActionType -eq $TASK_ACTION_SHOW_MESSAGE) {
+            Assert-True ([string]$action.Title -eq $ExpectedMsgTitle) ('{0} ShowMessage title correct' -f $Name)
+        }
+
+        # Verify trigger-specific fields.
+        if ($ExpectedDaysOfWeek -ne 0) {
+            Assert-True (([int]$trigger.DaysOfWeek) -eq $ExpectedDaysOfWeek) ('{0} DaysOfWeek matches' -f $Name)
+        }
+        if ($ExpectedWeeksInterval -ne 1) {
+            Assert-True (([int]$trigger.WeeksInterval) -eq $ExpectedWeeksInterval) ('{0} WeeksInterval matches' -f $Name)
+        }
+        if ($ExpectedDaysOfMonth -ne 0) {
+            Assert-True (([int]$trigger.DaysOfMonth) -eq $ExpectedDaysOfMonth) ('{0} DaysOfMonth matches' -f $Name)
+        }
+        if ($ExpectedMonthsOfYear -ne 0) {
+            Assert-True (([int]$trigger.MonthsOfYear) -eq $ExpectedMonthsOfYear) ('{0} MonthsOfYear matches' -f $Name)
+        }
+        if ($ExpectedWeeksOfMonth -ne 0) {
+            Assert-True (([int]$trigger.WeeksOfMonth) -eq $ExpectedWeeksOfMonth) ('{0} WeeksOfMonth matches' -f $Name)
+        }
+        if ($ExpectedDelay) {
+            Assert-True ([string]$trigger.Delay -eq $ExpectedDelay) ('{0} Delay matches' -f $Name)
+        }
+        if ($ExpectedRepeatMins -gt 0) {
+            Assert-True ([string]$trigger.Repetition.Interval -eq ('PT{0}M' -f $ExpectedRepeatMins)) ('{0} repeat interval correct' -f $Name)
+        }
+        if ($ExpectedRandomDelay) {
+            Assert-True ([string]$trigger.Repetition.RandomDelay -eq $ExpectedRandomDelay) ('{0} RandomDelay matches' -f $Name)
+        }
     }
     finally {
         Clear-ComObject $action
@@ -268,6 +396,108 @@ try {
     Assert-TestTask -Name $logonName -ExpectedTriggerType $TASK_TRIGGER_LOGON
     Assert-TestTask -Name $onceName -ExpectedTriggerType $TASK_TRIGGER_TIME
     Assert-TestTask -Name $dailyName -ExpectedTriggerType $TASK_TRIGGER_DAILY
+
+    # New trigger type tests.
+    $weeklyName = $uniquePrefix + '.Weekly'
+    Register-TestTask -Name $weeklyName -Kind Weekly -DaysOfWeek (0x2 -bor 0x8 -bor 0x20) -WeeksInterval 2
+    Assert-TestTask -Name $weeklyName -ExpectedTriggerType $TASK_TRIGGER_WEEKLY -ExpectedDaysOfWeek (0x2 -bor 0x8 -bor 0x20) -ExpectedWeeksInterval 2
+
+    $monthlyName = $uniquePrefix + '.Monthly'
+    $domMask = [Math]::Pow(2, 0) -bor [Math]::Pow(2, 14)  # days 1 and 15
+    $moyMask = 0x1 -bor 0x8  # Jan and Apr
+    Register-TestTask -Name $monthlyName -Kind Monthly -DaysOfMonth $domMask -MonthsOfYear $moyMask
+    Assert-TestTask -Name $monthlyName -ExpectedTriggerType $TASK_TRIGGER_MONTHLY -ExpectedDaysOfMonth $domMask -ExpectedMonthsOfYear $moyMask
+
+    $monthlyDowName = $uniquePrefix + '.MonthlyDOW'
+    Register-TestTask -Name $monthlyDowName -Kind MonthlyDOW -DaysOfWeek (0x2 -bor 0x10) -WeeksOfMonth (0x2 -bor 0x10) -MonthsOfYear $moyMask
+    Assert-TestTask -Name $monthlyDowName -ExpectedTriggerType $TASK_TRIGGER_MONTHLYDOW -ExpectedDaysOfWeek (0x2 -bor 0x10) -ExpectedWeeksOfMonth (0x2 -bor 0x10) -ExpectedMonthsOfYear $moyMask
+
+    $idleName = $uniquePrefix + '.Idle'
+    Register-TestTask -Name $idleName -Kind Idle
+    Assert-TestTask -Name $idleName -ExpectedTriggerType $TASK_TRIGGER_IDLE
+
+    $regName = $uniquePrefix + '.Registration'
+    Register-TestTask -Name $regName -Kind Registration -Delay 'PT30S'
+    Assert-TestTask -Name $regName -ExpectedTriggerType $TASK_TRIGGER_REGISTRATION -ExpectedDelay 'PT30S'
+
+    # ShowMessage action test.
+    $msgName = $uniquePrefix + '.ShowMessage'
+    Register-TestTask -Name $msgName -Kind Once -ActionType $TASK_ACTION_SHOW_MESSAGE -MsgTitle '测试标题' -MsgBody '测试消息正文'
+    Assert-TestTask -Name $msgName -ExpectedTriggerType $TASK_TRIGGER_TIME -ExpectedActionType $TASK_ACTION_SHOW_MESSAGE -ExpectedMsgTitle '测试标题'
+
+    # RandomDelay test.
+    $randomName = $uniquePrefix + '.RandomDelay'
+    Register-TestTask -Name $randomName -Kind Once -RepeatMinutes 30 -RandomDelay 'PT5M'
+    Assert-TestTask -Name $randomName -ExpectedTriggerType $TASK_TRIGGER_TIME -ExpectedRepeatMins 30 -ExpectedRandomDelay 'PT5M'
+
+    # Multi-action test: Exec + ShowMessage in one task.
+    $multiActionName = $uniquePrefix + '.MultiAction'
+    $maDefinition = $null
+    try {
+        $maDefinition = $script:service.NewTask(0)
+        $maDefinition.RegistrationInfo.Author = $identity.Name
+        $maDefinition.RegistrationInfo.Description = 'Multi-action test'
+        $maDefinition.Principal.UserId = $currentSid
+        $maDefinition.Principal.LogonType = $TASK_LOGON_INTERACTIVE_TOKEN
+        $maDefinition.Principal.RunLevel = $TASK_RUNLEVEL_LUA
+        $maDefinition.Settings.Enabled = $true
+        $maDefinition.Settings.AllowDemandStart = $true
+        $maTrig = $maDefinition.Triggers.Create($TASK_TRIGGER_TIME)
+        $maTrig.StartBoundary = (Get-Date).AddHours(1).ToString('yyyy-MM-ddTHH:mm:ss')
+        $maTrig.Enabled = $true
+        $maAct1 = $maDefinition.Actions.Create($TASK_ACTION_EXEC)
+        $maAct1.Path = Join-Path $env:SystemRoot 'System32\PING.EXE'
+        $maAct1.Arguments = '127.0.0.1 -n 3'
+        $maAct2 = $maDefinition.Actions.Create($TASK_ACTION_SHOW_MESSAGE)
+        $maAct2.Title = 'Multi-Action Title'
+        $maAct2.MessageBody = 'Multi-Action Body'
+        [void]$root.RegisterTaskDefinition($multiActionName, $maDefinition, $TASK_CREATE, $currentSid, $null, $TASK_LOGON_INTERACTIVE_TOKEN, $null)
+        $script:createdNames.Add($multiActionName)
+        Clear-ComObject $maAct1; Clear-ComObject $maAct2; Clear-ComObject $maTrig
+        $maTask = $root.GetTask($multiActionName)
+        $maActions = $maTask.Definition.Actions
+        Assert-True (([int]$maActions.Count) -eq 2) 'Multi-action task has 2 actions'
+        Assert-True (([int]$maActions.Item(1).Type) -eq $TASK_ACTION_EXEC) 'Multi-action first action is Exec'
+        Assert-True (([int]$maActions.Item(2).Type) -eq $TASK_ACTION_SHOW_MESSAGE) 'Multi-action second action is ShowMessage'
+        Clear-ComObject $maActions; Clear-ComObject $maTask
+    }
+    finally {
+        Clear-ComObject $maDefinition
+    }
+
+    # Multi-trigger test: Daily + Logon in one task.
+    $multiTriggerName = $uniquePrefix + '.MultiTrigger'
+    $mtDefinition = $null
+    try {
+        $mtDefinition = $script:service.NewTask(0)
+        $mtDefinition.RegistrationInfo.Author = $identity.Name
+        $mtDefinition.RegistrationInfo.Description = 'Multi-trigger test'
+        $mtDefinition.Principal.UserId = $currentSid
+        $mtDefinition.Principal.LogonType = $TASK_LOGON_INTERACTIVE_TOKEN
+        $mtDefinition.Principal.RunLevel = $TASK_RUNLEVEL_LUA
+        $mtDefinition.Settings.Enabled = $true
+        $mtDefinition.Settings.AllowDemandStart = $true
+        $mtTrig1 = $mtDefinition.Triggers.Create($TASK_TRIGGER_DAILY)
+        $mtTrig1.StartBoundary = (Get-Date).Date.AddDays(1).AddHours(9).ToString('yyyy-MM-ddTHH:mm:ss')
+        $mtTrig1.DaysInterval = 1; $mtTrig1.Enabled = $true
+        $mtTrig2 = $mtDefinition.Triggers.Create($TASK_TRIGGER_LOGON)
+        $mtTrig2.UserId = $currentSid; $mtTrig2.Enabled = $true
+        $mtAct = $mtDefinition.Actions.Create($TASK_ACTION_EXEC)
+        $mtAct.Path = Join-Path $env:SystemRoot 'System32\PING.EXE'
+        $mtAct.Arguments = '127.0.0.1 -n 3'
+        [void]$root.RegisterTaskDefinition($multiTriggerName, $mtDefinition, $TASK_CREATE, $currentSid, $null, $TASK_LOGON_INTERACTIVE_TOKEN, $null)
+        $script:createdNames.Add($multiTriggerName)
+        Clear-ComObject $mtAct; Clear-ComObject $mtTrig1; Clear-ComObject $mtTrig2
+        $mtTask = $root.GetTask($multiTriggerName)
+        $mtTriggers = $mtTask.Definition.Triggers
+        Assert-True (([int]$mtTriggers.Count) -eq 2) 'Multi-trigger task has 2 triggers'
+        Assert-True (([int]$mtTriggers.Item(1).Type) -eq $TASK_TRIGGER_DAILY) 'Multi-trigger first is Daily'
+        Assert-True (([int]$mtTriggers.Item(2).Type) -eq $TASK_TRIGGER_LOGON) 'Multi-trigger second is Logon'
+        Clear-ComObject $mtTriggers; Clear-ComObject $mtTask
+    }
+    finally {
+        Clear-ComObject $mtDefinition
+    }
 
     $controlTask = $null
     $running = $null

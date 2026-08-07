@@ -7,7 +7,7 @@ function Show-TaskEditor {
     [xml]$editorXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="任务" Width="760" Height="880" MinWidth="680" MinHeight="800"
+        Title="任务" Width="780" Height="1050" MinWidth="700" MinHeight="900"
         WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
   <Grid Margin="16">
     <Grid.RowDefinitions>
@@ -45,21 +45,20 @@ function Show-TaskEditor {
         <Label Grid.Row="4" Grid.Column="0" Content="状态"/>
         <CheckBox x:Name="EnabledBox" Grid.Row="4" Grid.Column="1" Margin="8,7" Content="启用任务" IsChecked="True"/>
         <Separator Grid.Row="5" Grid.ColumnSpan="2" Margin="0,10"/>
-        <Label Grid.Row="6" Grid.Column="0" Content="程序路径"/>
-        <Grid Grid.Row="6" Grid.Column="1">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <TextBox x:Name="ProgramBox" Margin="4"/>
-          <Button x:Name="BrowseButton" Grid.Column="1" Width="75" Margin="4" Content="浏览..."/>
-        </Grid>
-        <Label Grid.Row="7" Grid.Column="0" Content="参数"/>
-        <TextBox x:Name="ArgumentsBox" Grid.Row="7" Grid.Column="1" Margin="4"/>
-        <Label Grid.Row="8" Grid.Column="0" Content="工作目录"/>
-        <TextBox x:Name="WorkingDirectoryBox" Grid.Row="8" Grid.Column="1" Margin="4"/>
+        <StackPanel Grid.Row="6" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,0,0,4">
+          <Label Content="操作" Margin="0,0,8,0"/>
+          <Button x:Name="AddActionButton" Width="85" Content="添加操作"/>
+        </StackPanel>
+        <ScrollViewer Grid.Row="7" Grid.Column="0" Grid.ColumnSpan="2" MaxHeight="250"
+                      VerticalScrollBarVisibility="Auto">
+          <StackPanel x:Name="ActionsPanel"/>
+        </ScrollViewer>
+        <Separator Grid.Row="8" Grid.ColumnSpan="2" Margin="0,10"/>
         <Label Grid.Row="9" Grid.Column="0" Content="运行方式"/>
         <CheckBox x:Name="BackgroundBox" Grid.Row="9" Grid.Column="1" Margin="8,7"
                   Content="后台应用（无控制台窗口，记录 stdout/stderr）"/>
         <TextBlock Grid.Row="10" Grid.Column="1" Margin="8,0,4,5" Foreground="#666666" TextWrapping="Wrap"
-                   Text="运行文件按完整任务路径的 SHA-256 隔离，位于 %LOCALAPPDATA%\UserTaskManager\Tasks\&lt;hash&gt;\。"/>
+                   Text="后台模式应用于第一个 Exec 操作。运行文件按完整任务路径的 SHA-256 隔离。"/>
         <Label Grid.Row="11" Grid.Column="0" Content="日志目录（可选）"/>
         <Grid Grid.Row="11" Grid.Column="1">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -69,15 +68,14 @@ function Show-TaskEditor {
                   IsEnabled="{Binding IsChecked, ElementName=BackgroundBox}"/>
         </Grid>
         <TextBlock Grid.Row="12" Grid.Column="1" Margin="8,0,4,5" Foreground="#666666" TextWrapping="Wrap"
-                   Text="仅用于后台应用。留空时日志保存在上述任务专属目录的 logs 子目录。"/>
+                   Text="仅用于后台应用。留空时日志保存在任务专属目录的 logs 子目录。"/>
         <Separator Grid.Row="13" Grid.ColumnSpan="2" Margin="0,10"/>
         <Label Grid.Row="14" Grid.Column="0" Content="自定义环境变量"
                IsEnabled="{Binding IsChecked, ElementName=BackgroundBox}"/>
         <Grid Grid.Row="14" Grid.Column="1" Margin="4,0"
               IsEnabled="{Binding IsChecked, ElementName=BackgroundBox}">
           <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
           </Grid.RowDefinitions>
           <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">
             <StackPanel x:Name="EnvVarsPanel"/>
@@ -89,21 +87,14 @@ function Show-TaskEditor {
                    TextWrapping="Wrap"
                    Text="仅用于后台应用。变量名不能为空；值为空则取消该变量。同名变量将覆盖继承值。"/>
         <Separator Grid.Row="16" Grid.ColumnSpan="2" Margin="0,10"/>
-        <Label Grid.Row="17" Grid.Column="0" Content="触发器"/>
-        <ComboBox x:Name="TriggerKindBox" Grid.Row="17" Grid.Column="1" Margin="4" SelectedIndex="0">
-          <ComboBoxItem Content="登录时"/><ComboBoxItem Content="单次"/><ComboBoxItem Content="每天"/>
-        </ComboBox>
-        <Label Grid.Row="18" Grid.Column="0" Content="开始日期和时间"/>
-        <StackPanel Grid.Row="18" Grid.Column="1" Orientation="Horizontal">
-          <DatePicker x:Name="StartDatePicker" Width="180" Margin="4"/>
-          <TextBox x:Name="StartTimeBox" Width="90" Margin="4" ToolTip="HH:mm"/>
-          <TextBlock Margin="4,7" Text="（登录触发器忽略此项）"/>
+        <StackPanel Grid.Row="17" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,0,0,4">
+          <Label Content="触发器" Margin="0,0,8,0"/>
+          <Button x:Name="AddTriggerButton" Width="85" Content="添加触发器"/>
         </StackPanel>
-        <Label Grid.Row="19" Grid.Column="0" Content="重复间隔（分钟）"/>
-        <StackPanel Grid.Row="19" Grid.Column="1" Orientation="Horizontal">
-          <TextBox x:Name="RepeatMinutesBox" Width="90" Margin="4" Text="0"/>
-          <TextBlock Margin="4,7" Text="0 表示不重复；登录触发器不支持重复"/>
-        </StackPanel>
+        <ScrollViewer Grid.Row="18" Grid.Column="0" Grid.ColumnSpan="2" MaxHeight="300"
+                      VerticalScrollBarVisibility="Auto">
+          <StackPanel x:Name="TriggersPanel"/>
+        </ScrollViewer>
       </Grid>
     </ScrollViewer>
     <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
@@ -122,16 +113,12 @@ function Show-TaskEditor {
     $taskNameBox = $window.FindName('TaskNameBox')
     $descriptionBox = $window.FindName('DescriptionBox')
     $enabledBox = $window.FindName('EnabledBox')
-    $programBox = $window.FindName('ProgramBox')
-    $argumentsBox = $window.FindName('ArgumentsBox')
-    $workingDirectoryBox = $window.FindName('WorkingDirectoryBox')
     $backgroundBox = $window.FindName('BackgroundBox')
     $logDirectoryBox = $window.FindName('LogDirectoryBox')
-    $triggerKindBox = $window.FindName('TriggerKindBox')
-    $startDatePicker = $window.FindName('StartDatePicker')
-    $startTimeBox = $window.FindName('StartTimeBox')
-    $repeatMinutesBox = $window.FindName('RepeatMinutesBox')
-    $browseButton = $window.FindName('BrowseButton')
+    $actionsPanel = $window.FindName('ActionsPanel')
+    $addActionButton = $window.FindName('AddActionButton')
+    $triggersPanel = $window.FindName('TriggersPanel')
+    $addTriggerButton = $window.FindName('AddTriggerButton')
     $browseLogDirectoryButton = $window.FindName('BrowseLogDirectoryButton')
     $saveButton = $window.FindName('SaveButton')
     $cancelButton = $window.FindName('CancelButton')
@@ -140,6 +127,8 @@ function Show-TaskEditor {
 
     $script:__envVarRows = New-Object 'System.Collections.Generic.List[object]'
     $script:__envVarsPanel = $envVarsPanel
+    $script:__actionRows = New-Object 'System.Collections.Generic.List[object]'
+    $script:__triggerRows = New-Object 'System.Collections.Generic.List[object]'
 
     function New-EnvVarRow {
         $row = New-Object Windows.Controls.Grid
@@ -155,31 +144,25 @@ function Show-TaskEditor {
         [void]$row.ColumnDefinitions.Add($col2)
         [void]$row.ColumnDefinitions.Add($col3)
         [void]$row.ColumnDefinitions.Add($col4)
-
         $nameBox = New-Object Windows.Controls.TextBox
         $nameBox.Margin = [Windows.Thickness]::new(2, 2, 4, 2)
         [Windows.Controls.Grid]::SetColumn($nameBox, 0)
         [void]$row.Children.Add($nameBox)
-
         $eqLabel = New-Object Windows.Controls.TextBlock
         $eqLabel.Text = ' = '
         $eqLabel.VerticalAlignment = [Windows.VerticalAlignment]::Center
         $eqLabel.HorizontalAlignment = [Windows.HorizontalAlignment]::Center
         [Windows.Controls.Grid]::SetColumn($eqLabel, 1)
         [void]$row.Children.Add($eqLabel)
-
         $valueBox = New-Object Windows.Controls.TextBox
         $valueBox.Margin = [Windows.Thickness]::new(4, 2, 2, 2)
         [Windows.Controls.Grid]::SetColumn($valueBox, 2)
         [void]$row.Children.Add($valueBox)
-
         $removeButton = New-Object Windows.Controls.Button
         $removeButton.Content = '✕'
-        $removeButton.Width = 26
-        $removeButton.Height = 22
+        $removeButton.Width = 26; $removeButton.Height = 22
         $removeButton.Margin = [Windows.Thickness]::new(4, 2, 0, 2)
-        $removeButton.FontSize = 11
-        $removeButton.Tag = $row
+        $removeButton.FontSize = 11; $removeButton.Tag = $row
         [Windows.Controls.Grid]::SetColumn($removeButton, 3)
         $removeButton.Add_Click({
             $currentRow = $this.Tag
@@ -187,16 +170,362 @@ function Show-TaskEditor {
             [void]$script:__envVarRows.Remove($currentRow)
         })
         [void]$row.Children.Add($removeButton)
-
         $row.Margin = [Windows.Thickness]::new(0, 0, 0, 2)
         [void]$script:__envVarsPanel.Children.Add($row)
         [void]$script:__envVarRows.Add($row)
         return @{ NameBox = $nameBox; ValueBox = $valueBox }
     }
 
-    $addEnvVarButton.Add_Click({
-        [void](New-EnvVarRow)
-    })
+    function New-ActionRow {
+        $outerBorder = New-Object Windows.Controls.Border
+        $outerBorder.BorderBrush = [Windows.Media.Brushes]::LightGray
+        $outerBorder.BorderThickness = [Windows.Thickness]::new(1)
+        $outerBorder.Margin = [Windows.Thickness]::new(0, 0, 0, 6)
+        $outerBorder.Padding = [Windows.Thickness]::new(6)
+        $grid = New-Object Windows.Controls.Grid
+        for ($i = 0; $i -lt 6; $i++) {
+            $rd = New-Object Windows.Controls.RowDefinition; $rd.Height = 'Auto'
+            [void]$grid.RowDefinitions.Add($rd)
+        }
+        $colA = New-Object Windows.Controls.ColumnDefinition
+        $colA.Width = [Windows.GridLength]::new(65)
+        $colB = New-Object Windows.Controls.ColumnDefinition
+        $colB.Width = [Windows.GridLength]::new(1, [Windows.GridUnitType]::Star)
+        $colC = New-Object Windows.Controls.ColumnDefinition
+        $colC.Width = [Windows.GridLength]::Auto
+        [void]$grid.ColumnDefinitions.Add($colA); [void]$grid.ColumnDefinitions.Add($colB); [void]$grid.ColumnDefinitions.Add($colC)
+
+        # Row 0: type combo + remove button
+        $typeCombo = New-Object Windows.Controls.ComboBox
+        $typeCombo.Margin = [Windows.Thickness]::new(2)
+        $itemExec = New-Object Windows.Controls.ComboBoxItem; $itemExec.Content = 'Exec 程序'; $itemExec.Tag = 'Exec'
+        $itemMsg = New-Object Windows.Controls.ComboBoxItem; $itemMsg.Content = '显示消息'; $itemMsg.Tag = 'ShowMessage'
+        [void]$typeCombo.Items.Add($itemExec); [void]$typeCombo.Items.Add($itemMsg)
+        $typeCombo.SelectedIndex = 0
+        [Windows.Controls.Grid]::SetRow($typeCombo, 0); [Windows.Controls.Grid]::SetColumn($typeCombo, 1)
+        [void]$grid.Children.Add($typeCombo)
+
+        $removeBtn = New-Object Windows.Controls.Button
+        $removeBtn.Content = '删除此操作'; $removeBtn.Width = 85; $removeBtn.Height = 22
+        $removeBtn.Margin = [Windows.Thickness]::new(4, 2, 0, 2); $removeBtn.FontSize = 11
+        [Windows.Controls.Grid]::SetRow($removeBtn, 0); [Windows.Controls.Grid]::SetColumn($removeBtn, 2)
+        [void]$grid.Children.Add($removeBtn)
+
+        # Row 1: Exec - program path + browse
+        $execPathLabel = New-Object Windows.Controls.TextBlock
+        $execPathLabel.Text = '程序路径'; $execPathLabel.Margin = [Windows.Thickness]::new(2, 4, 4, 2)
+        $execPathLabel.VerticalAlignment = 'Center'
+        [Windows.Controls.Grid]::SetRow($execPathLabel, 1); [Windows.Controls.Grid]::SetColumn($execPathLabel, 0)
+        [void]$grid.Children.Add($execPathLabel)
+
+        $execPathBox = New-Object Windows.Controls.TextBox
+        $execPathBox.Margin = [Windows.Thickness]::new(2, 2, 2, 2)
+        [Windows.Controls.Grid]::SetRow($execPathBox, 1); [Windows.Controls.Grid]::SetColumn($execPathBox, 1)
+        [void]$grid.Children.Add($execPathBox)
+
+        $execBrowseBtn = New-Object Windows.Controls.Button
+        $execBrowseBtn.Content = '浏览...'; $execBrowseBtn.Width = 75; $execBrowseBtn.Height = 22
+        $execBrowseBtn.Margin = [Windows.Thickness]::new(4, 2, 2, 2)
+        [Windows.Controls.Grid]::SetRow($execBrowseBtn, 1); [Windows.Controls.Grid]::SetColumn($execBrowseBtn, 2)
+        [void]$grid.Children.Add($execBrowseBtn)
+        $execBrowseBtn.Add_Click({
+            $dialog = New-Object Microsoft.Win32.OpenFileDialog
+            $dialog.Title = '选择要运行的程序'
+            $dialog.Filter = '可执行文件 (*.exe;*.com;*.bat;*.cmd)|*.exe;*.com;*.bat;*.cmd|所有文件 (*.*)|*.*'
+            if ($dialog.ShowDialog($window)) {
+                $execPathBox.Text = $dialog.FileName
+                if ([string]::IsNullOrWhiteSpace($execWdBox.Text)) {
+                    $execWdBox.Text = [IO.Path]::GetDirectoryName($dialog.FileName)
+                }
+            }
+        })
+
+        # Row 2: Exec - arguments
+        $execArgsLabel = New-Object Windows.Controls.TextBlock
+        $execArgsLabel.Text = '参数'; $execArgsLabel.Margin = [Windows.Thickness]::new(2, 2, 4, 2)
+        $execArgsLabel.VerticalAlignment = 'Center'
+        [Windows.Controls.Grid]::SetRow($execArgsLabel, 2); [Windows.Controls.Grid]::SetColumn($execArgsLabel, 0)
+        [void]$grid.Children.Add($execArgsLabel)
+        $execArgsBox = New-Object Windows.Controls.TextBox
+        $execArgsBox.Margin = [Windows.Thickness]::new(2, 2, 2, 2)
+        [Windows.Controls.Grid]::SetRow($execArgsBox, 2); [Windows.Controls.Grid]::SetColumn($execArgsBox, 1)
+        [void]$grid.Children.Add($execArgsBox)
+
+        # Row 3: Exec - working directory
+        $execWdLabel = New-Object Windows.Controls.TextBlock
+        $execWdLabel.Text = '工作目录'; $execWdLabel.Margin = [Windows.Thickness]::new(2, 2, 4, 2)
+        $execWdLabel.VerticalAlignment = 'Center'
+        [Windows.Controls.Grid]::SetRow($execWdLabel, 3); [Windows.Controls.Grid]::SetColumn($execWdLabel, 0)
+        [void]$grid.Children.Add($execWdLabel)
+        $execWdBox = New-Object Windows.Controls.TextBox
+        $execWdBox.Margin = [Windows.Thickness]::new(2, 2, 2, 2)
+        [Windows.Controls.Grid]::SetRow($execWdBox, 3); [Windows.Controls.Grid]::SetColumn($execWdBox, 1)
+        [void]$grid.Children.Add($execWdBox)
+
+        # ShowMessage fields
+        $msgTitleLabel = New-Object Windows.Controls.TextBlock
+        $msgTitleLabel.Text = '标题'; $msgTitleLabel.Margin = [Windows.Thickness]::new(2, 4, 4, 2)
+        $msgTitleLabel.VerticalAlignment = 'Center'; $msgTitleLabel.Visibility = 'Collapsed'
+        [Windows.Controls.Grid]::SetRow($msgTitleLabel, 1); [Windows.Controls.Grid]::SetColumn($msgTitleLabel, 0)
+        [void]$grid.Children.Add($msgTitleLabel)
+        $msgTitleBox = New-Object Windows.Controls.TextBox
+        $msgTitleBox.Margin = [Windows.Thickness]::new(2, 2, 2, 2); $msgTitleBox.Visibility = 'Collapsed'
+        [Windows.Controls.Grid]::SetRow($msgTitleBox, 1); [Windows.Controls.Grid]::SetColumn($msgTitleBox, 1)
+        [void]$grid.Children.Add($msgTitleBox)
+
+        $msgBodyLabel = New-Object Windows.Controls.TextBlock
+        $msgBodyLabel.Text = '消息正文'; $msgBodyLabel.Margin = [Windows.Thickness]::new(2, 2, 4, 2)
+        $msgBodyLabel.VerticalAlignment = 'Center'; $msgBodyLabel.Visibility = 'Collapsed'
+        [Windows.Controls.Grid]::SetRow($msgBodyLabel, 2); [Windows.Controls.Grid]::SetColumn($msgBodyLabel, 0)
+        [void]$grid.Children.Add($msgBodyLabel)
+        $msgBodyBox = New-Object Windows.Controls.TextBox
+        $msgBodyBox.Margin = [Windows.Thickness]::new(2, 2, 2, 2); $msgBodyBox.Visibility = 'Collapsed'
+        $msgBodyBox.Height = 50; $msgBodyBox.AcceptsReturn = $true; $msgBodyBox.TextWrapping = 'Wrap'
+        [Windows.Controls.Grid]::SetRow($msgBodyBox, 2); [Windows.Controls.Grid]::SetColumn($msgBodyBox, 1)
+        [void]$grid.Children.Add($msgBodyBox)
+
+        # Exec field list for toggling
+        $execFields = @($execPathLabel, $execPathBox, $execBrowseBtn, $execArgsLabel, $execArgsBox, $execWdLabel, $execWdBox)
+        $msgFields = @($msgTitleLabel, $msgTitleBox, $msgBodyLabel, $msgBodyBox)
+
+        $typeCombo.Add_SelectionChanged({
+            $isExec = $typeCombo.SelectedIndex -eq 0
+            foreach ($c in $execFields) { $c.Visibility = if ($isExec) { 'Visible' } else { 'Collapsed' } }
+            foreach ($c in $msgFields) { $c.Visibility = if ($isExec) { 'Collapsed' } else { 'Visible' } }
+        })
+
+        $removeBtn.Tag = $outerBorder
+        $removeBtn.Add_Click({
+            $target = $this.Tag
+            [void]$script:__actionRows.Remove($target)
+            [void]$actionsPanel.Children.Remove($target)
+        })
+
+        $outerBorder.Tag = $grid
+        $outerBorder.Child = $grid
+        [void]$actionsPanel.Children.Add($outerBorder)
+        [void]$script:__actionRows.Add($outerBorder)
+        return @{
+            TypeCombo = $typeCombo
+            ExecPathBox = $execPathBox; ExecArgsBox = $execArgsBox; ExecWdBox = $execWdBox
+            MsgTitleBox = $msgTitleBox; MsgBodyBox = $msgBodyBox
+        }
+    }
+
+    function New-TriggerRow {
+        $outerBorder = New-Object Windows.Controls.Border
+        $outerBorder.BorderBrush = [Windows.Media.Brushes]::LightGray
+        $outerBorder.BorderThickness = [Windows.Thickness]::new(1)
+        $outerBorder.Margin = [Windows.Thickness]::new(0, 0, 0, 6)
+        $outerBorder.Padding = [Windows.Thickness]::new(6)
+        $grid = New-Object Windows.Controls.Grid
+        for ($i = 0; $i -lt 10; $i++) {
+            $rd = New-Object Windows.Controls.RowDefinition; $rd.Height = 'Auto'
+            [void]$grid.RowDefinitions.Add($rd)
+        }
+        $colA = New-Object Windows.Controls.ColumnDefinition
+        $colA.Width = [Windows.GridLength]::new(85)
+        $colB = New-Object Windows.Controls.ColumnDefinition
+        $colB.Width = [Windows.GridLength]::new(1, [Windows.GridUnitType]::Star)
+        $colC = New-Object Windows.Controls.ColumnDefinition
+        $colC.Width = [Windows.GridLength]::Auto
+        [void]$grid.ColumnDefinitions.Add($colA); [void]$grid.ColumnDefinitions.Add($colB); [void]$grid.ColumnDefinitions.Add($colC)
+
+        # Row 0 & 1: type combo + remove + StartBoundary + repeat
+        # Row 0: type combo
+        $typeCombo = New-Object Windows.Controls.ComboBox
+        $typeCombo.Margin = [Windows.Thickness]::new(2)
+        $triggerKinds = @('登录时', '单次', '每天', '每周', '每月', '每月（星期）', '空闲时', '注册时')
+        foreach ($tk in $triggerKinds) {
+            $item = New-Object Windows.Controls.ComboBoxItem; $item.Content = $tk
+            [void]$typeCombo.Items.Add($item)
+        }
+        $typeCombo.SelectedIndex = 1
+        [Windows.Controls.Grid]::SetRow($typeCombo, 0); [Windows.Controls.Grid]::SetColumn($typeCombo, 1)
+        [void]$grid.Children.Add($typeCombo)
+
+        $removeBtn = New-Object Windows.Controls.Button
+        $removeBtn.Content = '删除此触发器'; $removeBtn.Width = 100; $removeBtn.Height = 22
+        $removeBtn.Margin = [Windows.Thickness]::new(4, 2, 0, 2); $removeBtn.FontSize = 11
+        [Windows.Controls.Grid]::SetRow($removeBtn, 0); [Windows.Controls.Grid]::SetColumn($removeBtn, 2)
+        [void]$grid.Children.Add($removeBtn)
+
+        # Row 1: Start date + time (time-based only)
+        $dateTimePanel = New-Object Windows.Controls.StackPanel
+        $dateTimePanel.Orientation = 'Horizontal'; $dateTimePanel.Margin = [Windows.Thickness]::new(2, 2, 0, 2)
+        [Windows.Controls.Grid]::SetRow($dateTimePanel, 1); [Windows.Controls.Grid]::SetColumn($dateTimePanel, 1)
+        [Windows.Controls.Grid]::SetColumnSpan($dateTimePanel, 2)
+        [void]$grid.Children.Add($dateTimePanel)
+        $startDatePicker = New-Object Windows.Controls.DatePicker
+        $startDatePicker.Width = 180; $startDatePicker.Margin = [Windows.Thickness]::new(0, 0, 8, 0)
+        [void]$dateTimePanel.Children.Add($startDatePicker)
+        $startTimeBox = New-Object Windows.Controls.TextBox
+        $startTimeBox.Width = 80; $startTimeBox.Margin = [Windows.Thickness]::new(0, 0, 8, 0); $startTimeBox.ToolTip = 'HH:mm'
+        [void]$dateTimePanel.Children.Add($startTimeBox)
+        $dateTimeHint = New-Object Windows.Controls.TextBlock
+        $dateTimeHint.Text = '（登录、空闲、注册触发器忽略此项）'
+        $dateTimeHint.VerticalAlignment = 'Center'; $dateTimeHint.Foreground = '#666666'
+        [void]$dateTimePanel.Children.Add($dateTimeHint)
+
+        # Row 2: Repeat + RandomDelay
+        $repeatPanel = New-Object Windows.Controls.StackPanel
+        $repeatPanel.Orientation = 'Horizontal'; $repeatPanel.Margin = [Windows.Thickness]::new(2, 2, 0, 2)
+        [Windows.Controls.Grid]::SetRow($repeatPanel, 2); [Windows.Controls.Grid]::SetColumn($repeatPanel, 1)
+        [Windows.Controls.Grid]::SetColumnSpan($repeatPanel, 2)
+        [void]$grid.Children.Add($repeatPanel)
+        $repeatLabel = New-Object Windows.Controls.TextBlock
+        $repeatLabel.Text = '重复间隔(分钟)'; $repeatLabel.VerticalAlignment = 'Center'; $repeatLabel.Margin = [Windows.Thickness]::new(0, 0, 4, 0)
+        [void]$repeatPanel.Children.Add($repeatLabel)
+        $repeatMinsBox = New-Object Windows.Controls.TextBox
+        $repeatMinsBox.Width = 60; $repeatMinsBox.Margin = [Windows.Thickness]::new(0, 0, 8, 0); $repeatMinsBox.Text = '0'
+        [void]$repeatPanel.Children.Add($repeatMinsBox)
+        $randomLabel = New-Object Windows.Controls.TextBlock
+        $randomLabel.Text = '随机延迟(ISO)'; $randomLabel.VerticalAlignment = 'Center'; $randomLabel.Margin = [Windows.Thickness]::new(0, 0, 4, 0)
+        [void]$repeatPanel.Children.Add($randomLabel)
+        $randomDelayBox = New-Object Windows.Controls.TextBox
+        $randomDelayBox.Width = 90; $randomDelayBox.Margin = [Windows.Thickness]::new(0, 0, 4, 0)
+        $randomDelayBox.ToolTip = '例如 PT30M，留空表示不随机延迟'
+        [void]$repeatPanel.Children.Add($randomDelayBox)
+        $repeatHint = New-Object Windows.Controls.TextBlock
+        $repeatHint.Text = '0 表示不重复'; $repeatHint.VerticalAlignment = 'Center'; $repeatHint.Foreground = '#666666'
+        [void]$repeatPanel.Children.Add($repeatHint)
+
+        # Row 3: Weekly fields (DaysOfWeek + WeeksInterval)
+        $weeklyPanel = New-Object Windows.Controls.WrapPanel
+        $weeklyPanel.Margin = [Windows.Thickness]::new(2, 2, 0, 2); $weeklyPanel.Visibility = 'Collapsed'
+        [Windows.Controls.Grid]::SetRow($weeklyPanel, 3); [Windows.Controls.Grid]::SetColumn($weeklyPanel, 1)
+        [Windows.Controls.Grid]::SetColumnSpan($weeklyPanel, 2)
+        [void]$grid.Children.Add($weeklyPanel)
+        $dowTogglesForWeekly = @()
+        for ($di = 0; $di -lt 7; $di++) {
+            $tb = New-Object Windows.Controls.Primitives.ToggleButton
+            $tb.Content = $script:DayOfWeekShortNames[$di]; $tb.Width = 28; $tb.Height = 22
+            $tb.Margin = [Windows.Thickness]::new(1); $tb.FontSize = 11; $tb.Padding = [Windows.Thickness]::new(0)
+            $tb.Tag = $script:DayOfWeekMasks[$di]
+            [void]$weeklyPanel.Children.Add($tb)
+            $dowTogglesForWeekly += $tb
+        }
+        $weeksLabelW = New-Object Windows.Controls.TextBlock
+        $weeksLabelW.Text = '  间隔周数'; $weeksLabelW.VerticalAlignment = 'Center'; $weeksLabelW.Margin = [Windows.Thickness]::new(8, 0, 4, 0)
+        [void]$weeklyPanel.Children.Add($weeksLabelW)
+        $weeksIntervalBox = New-Object Windows.Controls.TextBox
+        $weeksIntervalBox.Width = 40; $weeksIntervalBox.Text = '1'
+        [void]$weeklyPanel.Children.Add($weeksIntervalBox)
+
+        # Row 4: Monthly fields (DaysOfMonth text + Months)
+        $monthlyPanel = New-Object Windows.Controls.StackPanel
+        $monthlyPanel.Orientation = 'Horizontal'; $monthlyPanel.Margin = [Windows.Thickness]::new(2, 2, 0, 2)
+        $monthlyPanel.Visibility = 'Collapsed'
+        [Windows.Controls.Grid]::SetRow($monthlyPanel, 4); [Windows.Controls.Grid]::SetColumn($monthlyPanel, 1)
+        [Windows.Controls.Grid]::SetColumnSpan($monthlyPanel, 2)
+        [void]$grid.Children.Add($monthlyPanel)
+        $domLabel = New-Object Windows.Controls.TextBlock
+        $domLabel.Text = '天号(逗号分隔 1-31)'; $domLabel.VerticalAlignment = 'Center'; $domLabel.Margin = [Windows.Thickness]::new(0, 0, 4, 0)
+        [void]$monthlyPanel.Children.Add($domLabel)
+        $domBox = New-Object Windows.Controls.TextBox
+        $domBox.Width = 140; $domBox.Margin = [Windows.Thickness]::new(0, 0, 8, 0); $domBox.ToolTip = '例如 1,15,28'
+        [void]$monthlyPanel.Children.Add($domBox)
+
+        # Row 5: Months toggle (shared by Monthly and MonthlyDOW)
+        $monthsPanel = New-Object Windows.Controls.WrapPanel
+        $monthsPanel.Margin = [Windows.Thickness]::new(2, 2, 0, 2); $monthsPanel.Visibility = 'Collapsed'
+        [Windows.Controls.Grid]::SetRow($monthsPanel, 5); [Windows.Controls.Grid]::SetColumn($monthsPanel, 1)
+        [Windows.Controls.Grid]::SetColumnSpan($monthsPanel, 2)
+        [void]$grid.Children.Add($monthsPanel)
+        $monthToggles = @()
+        for ($mi = 0; $mi -lt 12; $mi++) {
+            $mt = New-Object Windows.Controls.Primitives.ToggleButton
+            $mt.Content = [string]($mi + 1) + '月'; $mt.Width = 32; $mt.Height = 22
+            $mt.Margin = [Windows.Thickness]::new(1); $mt.FontSize = 11; $mt.Padding = [Windows.Thickness]::new(0)
+            $mt.Tag = $script:MonthMasks[$mi]
+            [void]$monthsPanel.Children.Add($mt)
+            $monthToggles += $mt
+        }
+
+        # Row 6: MonthlyDOW fields (DOW + WeeksOfMonth)
+        $monthlyDowPanel = New-Object Windows.Controls.WrapPanel
+        $monthlyDowPanel.Margin = [Windows.Thickness]::new(2, 2, 0, 2); $monthlyDowPanel.Visibility = 'Collapsed'
+        [Windows.Controls.Grid]::SetRow($monthlyDowPanel, 6); [Windows.Controls.Grid]::SetColumn($monthlyDowPanel, 1)
+        [Windows.Controls.Grid]::SetColumnSpan($monthlyDowPanel, 2)
+        [void]$grid.Children.Add($monthlyDowPanel)
+        $dowTogglesForMDOW = @()
+        for ($di = 0; $di -lt 7; $di++) {
+            $tb = New-Object Windows.Controls.Primitives.ToggleButton
+            $tb.Content = $script:DayOfWeekShortNames[$di]; $tb.Width = 28; $tb.Height = 22
+            $tb.Margin = [Windows.Thickness]::new(1); $tb.FontSize = 11; $tb.Padding = [Windows.Thickness]::new(0)
+            $tb.Tag = $script:DayOfWeekMasks[$di]
+            [void]$monthlyDowPanel.Children.Add($tb)
+            $dowTogglesForMDOW += $tb
+        }
+        $womToggles = @()
+        for ($wi = 0; $wi -lt 5; $wi++) {
+            $wt = New-Object Windows.Controls.Primitives.ToggleButton
+            $wt.Content = $script:WeekOfMonthNames[$wi]; $wt.Height = 22
+            $wt.Margin = [Windows.Thickness]::new(1); $wt.FontSize = 11; $wt.Padding = [Windows.Thickness]::new(2, 0, 2, 0)
+            $wt.Tag = $script:WeekOfMonthMasks[$wi]
+            [void]$monthlyDowPanel.Children.Add($wt)
+            $womToggles += $wt
+        }
+
+        # Row 7: Registration delay
+        $regDelayPanel = New-Object Windows.Controls.StackPanel
+        $regDelayPanel.Orientation = 'Horizontal'; $regDelayPanel.Margin = [Windows.Thickness]::new(2, 4, 0, 2)
+        $regDelayPanel.Visibility = 'Collapsed'
+        [Windows.Controls.Grid]::SetRow($regDelayPanel, 7); [Windows.Controls.Grid]::SetColumn($regDelayPanel, 1)
+        [Windows.Controls.Grid]::SetColumnSpan($regDelayPanel, 2)
+        [void]$grid.Children.Add($regDelayPanel)
+        $regDelayLabel = New-Object Windows.Controls.TextBlock
+        $regDelayLabel.Text = '延迟(ISO)'; $regDelayLabel.VerticalAlignment = 'Center'; $regDelayLabel.Margin = [Windows.Thickness]::new(0, 0, 4, 0)
+        [void]$regDelayPanel.Children.Add($regDelayLabel)
+        $regDelayBox = New-Object Windows.Controls.TextBox
+        $regDelayBox.Width = 100; $regDelayBox.ToolTip = '例如 PT30S，留空表示不延迟'
+        [void]$regDelayPanel.Children.Add($regDelayBox)
+
+        # Visibility groups
+        $timeBasedFields = @($dateTimePanel, $repeatPanel)
+        $weeklyFields = @($weeklyPanel)
+        $monthlyFields = @($monthlyPanel, $monthsPanel)
+        $monthlyDowFields = @($monthlyDowPanel, $monthsPanel)
+        $regFields = @($regDelayPanel)
+        $allTypeSpecific = @($weeklyPanel, $monthlyPanel, $monthsPanel, $monthlyDowPanel, $regDelayPanel)
+
+        $typeCombo.Add_SelectionChanged({
+            $kind = [string]$typeCombo.SelectedItem.Content
+            $isTimeBased = $kind -in @('单次', '每天', '每周', '每月', '每月（星期）')
+            $vis = if ($isTimeBased) { 'Visible' } else { 'Collapsed' }
+            foreach ($c in $timeBasedFields) { $c.Visibility = $vis }
+            foreach ($c in $allTypeSpecific) { $c.Visibility = 'Collapsed' }
+            switch ($kind) {
+                '每周' { foreach ($c in $weeklyFields) { $c.Visibility = 'Visible' } }
+                '每月' { foreach ($c in $monthlyFields) { $c.Visibility = 'Visible' } }
+                '每月（星期）' { foreach ($c in $monthlyDowFields) { $c.Visibility = 'Visible' } }
+                '注册时' { foreach ($c in $regFields) { $c.Visibility = 'Visible' } }
+            }
+        })
+
+        $removeBtn.Tag = $outerBorder
+        $removeBtn.Add_Click({
+            $target = $this.Tag
+            [void]$script:__triggerRows.Remove($target)
+            [void]$triggersPanel.Children.Remove($target)
+        })
+
+        $outerBorder.Tag = $grid
+        $outerBorder.Child = $grid
+        [void]$triggersPanel.Children.Add($outerBorder)
+        [void]$script:__triggerRows.Add($outerBorder)
+        return @{
+            TypeCombo = $typeCombo
+            StartDatePicker = $startDatePicker; StartTimeBox = $startTimeBox
+            RepeatMinsBox = $repeatMinsBox; RandomDelayBox = $randomDelayBox
+            DowToggles = $dowTogglesForWeekly; WeeksIntervalBox = $weeksIntervalBox
+            DomBox = $domBox; MonthToggles = $monthToggles
+            MonthlyDowDOWToggles = $dowTogglesForMDOW; WomToggles = $womToggles
+            RegDelayBox = $regDelayBox
+        }
+    }
+
+    $addEnvVarButton.Add_Click({ [void](New-EnvVarRow) })
 
     foreach ($path in $script:FolderPaths) {
         [void]$taskPathBox.Items.Add($path)
@@ -207,9 +536,6 @@ function Show-TaskEditor {
         $taskNameBox.Text = $ExistingData.TaskName
         $descriptionBox.Text = $ExistingData.Description
         $enabledBox.IsChecked = $ExistingData.Enabled
-        $programBox.Text = $ExistingData.Program
-        $argumentsBox.Text = $ExistingData.Arguments
-        $workingDirectoryBox.Text = $ExistingData.WorkingDirectory
         $backgroundBox.IsChecked = [bool]$ExistingData.BackgroundMode
         if ($null -ne $ExistingData.PSObject.Properties['LogDirectory']) {
             $logDirectoryBox.Text = [string]$ExistingData.LogDirectory
@@ -222,32 +548,67 @@ function Show-TaskEditor {
                 $envRow.ValueBox.Text = [string]$prop.Value
             }
         }
-        foreach ($item in $triggerKindBox.Items) {
-            if ([string]$item.Content -eq $ExistingData.TriggerKind) {
-                $triggerKindBox.SelectedItem = $item
-                break
+        # Populate actions from edit data.
+        if ($null -ne $ExistingData.PSObject.Properties['Actions'] -and $ExistingData.Actions.Count -gt 0) {
+            foreach ($actData in $ExistingData.Actions) {
+                $ar = New-ActionRow
+                if ($actData.Type -eq 'ShowMessage') {
+                    $ar.TypeCombo.SelectedIndex = 1
+                    $ar.MsgTitleBox.Text = $actData.Title
+                    $ar.MsgBodyBox.Text = $actData.MessageBody
+                }
+                else {
+                    $ar.TypeCombo.SelectedIndex = 0
+                    $ar.ExecPathBox.Text = $actData.Program
+                    $ar.ExecArgsBox.Text = $actData.Arguments
+                    $ar.ExecWdBox.Text = $actData.WorkingDirectory
+                }
             }
         }
-        $startDatePicker.SelectedDate = $ExistingData.StartDate
-        $startTimeBox.Text = $ExistingData.StartTime
-        $repeatMinutesBox.Text = [string]$ExistingData.RepeatMinutes
+        # Populate triggers from edit data.
+        if ($null -ne $ExistingData.PSObject.Properties['Triggers'] -and $ExistingData.Triggers.Count -gt 0) {
+            foreach ($trgData in $ExistingData.Triggers) {
+                $tr = New-TriggerRow
+                for ($ti = 0; $ti -lt $tr.TypeCombo.Items.Count; $ti++) {
+                    if ([string]$tr.TypeCombo.Items[$ti].Content -eq $trgData.Kind) {
+                        $tr.TypeCombo.SelectedIndex = $ti; break
+                    }
+                }
+                $tr.StartDatePicker.SelectedDate = $trgData.StartDate
+                $tr.StartTimeBox.Text = $trgData.StartTime
+                $tr.RepeatMinsBox.Text = [string]$trgData.RepeatMinutes
+                $tr.RandomDelayBox.Text = $trgData.RandomDelay
+                if ($trgData.Kind -in @('每周', '每月（星期）')) {
+                    $toggles = if ($trgData.Kind -eq '每周') { $tr.DowToggles } else { $tr.MonthlyDowDOWToggles }
+                    foreach ($tb in $toggles) { $tb.IsChecked = ([int]$trgData.DaysOfWeek -band [int]$tb.Tag) -ne 0 }
+                }
+                if ($trgData.Kind -eq '每周') { $tr.WeeksIntervalBox.Text = [string]$trgData.WeeksInterval }
+                if ($trgData.Kind -eq '每月') { $tr.DomBox.Text = (Convert-BitmaskToString -Mask ([int]$trgData.DaysOfMonth) -Names ([string[]](1..31 | ForEach-Object { [string]$_ })) -Values ([int[]](1..31 | ForEach-Object { [Math]::Pow(2, $_ - 1) }))) }
+                if ($trgData.Kind -in @('每月', '每月（星期）')) {
+                    foreach ($mt in $tr.MonthToggles) { $mt.IsChecked = ([int]$trgData.MonthsOfYear -band [int]$mt.Tag) -ne 0 }
+                }
+                if ($trgData.Kind -eq '每月（星期）') {
+                    foreach ($wt in $tr.WomToggles) { $wt.IsChecked = ([int]$trgData.WeeksOfMonth -band [int]$wt.Tag) -ne 0 }
+                }
+                if ($trgData.Kind -eq '注册时') { $tr.RegDelayBox.Text = $trgData.Delay }
+            }
+        }
     }
     else {
         $taskPathBox.Text = $script:CurrentFolderPath
-        $startDatePicker.SelectedDate = (Get-Date).Date.AddDays(1)
-        $startTimeBox.Text = '09:00'
+        $newAction = New-ActionRow
+        $newTrigger = New-TriggerRow
+        $newTrigger.StartDatePicker.SelectedDate = (Get-Date).Date.AddDays(1)
+        $newTrigger.StartTimeBox.Text = '09:00'
+        $newTrigger.RepeatMinsBox.Text = '0'
     }
 
-    $browseButton.Add_Click({
-        $dialog = New-Object Microsoft.Win32.OpenFileDialog
-        $dialog.Title = '选择要运行的程序'
-        $dialog.Filter = '可执行文件 (*.exe;*.com;*.bat;*.cmd)|*.exe;*.com;*.bat;*.cmd|所有文件 (*.*)|*.*'
-        if ($dialog.ShowDialog($window)) {
-            $programBox.Text = $dialog.FileName
-            if ([string]::IsNullOrWhiteSpace($workingDirectoryBox.Text)) {
-                $workingDirectoryBox.Text = [IO.Path]::GetDirectoryName($dialog.FileName)
-            }
-        }
+    $addActionButton.Add_Click({ [void](New-ActionRow) })
+    $addTriggerButton.Add_Click({
+        $tr = New-TriggerRow
+        $tr.StartDatePicker.SelectedDate = (Get-Date).Date.AddDays(1)
+        $tr.StartTimeBox.Text = '09:00'
+        $tr.RepeatMinsBox.Text = '0'
     })
 
     $browseLogDirectoryButton.Add_Click({
@@ -266,16 +627,12 @@ function Show-TaskEditor {
         }
         catch {
             [void][Windows.MessageBox]::Show(
-                $window,
-                $_.Exception.Message,
+                $window, $_.Exception.Message,
                 '无法选择日志目录',
-                [Windows.MessageBoxButton]::OK,
-                [Windows.MessageBoxImage]::Warning
+                [Windows.MessageBoxButton]::OK, [Windows.MessageBoxImage]::Warning
             )
         }
-        finally {
-            if ($null -ne $dialog) { $dialog.Dispose() }
-        }
+        finally { if ($null -ne $dialog) { $dialog.Dispose() } }
     })
 
     $cancelButton.Add_Click({ $window.DialogResult = $false })
@@ -285,45 +642,121 @@ function Show-TaskEditor {
             if ($null -ne $taskNameError) { throw $taskNameError }
             $pathError = Test-FolderPath $taskPathBox.Text
             if ($null -ne $pathError) { throw $pathError }
-            if ([string]::IsNullOrWhiteSpace($programBox.Text)) {
-                throw '程序路径不能为空。'
-            }
-            if ($programBox.Text.IndexOf([char]0) -ge 0 -or
-                $argumentsBox.Text.IndexOf([char]0) -ge 0 -or
-                $workingDirectoryBox.Text.IndexOf([char]0) -ge 0) {
-                throw '程序、参数或工作目录包含无效字符。'
-            }
 
-            $kind = [string]$triggerKindBox.SelectedItem.Content
-            $startDateTime = Get-Date
-            if ($kind -ne '登录时') {
-                if ($null -eq $startDatePicker.SelectedDate) {
-                    throw '请选择开始日期。'
+            # --- Extract actions ---
+            $actionList = New-Object 'System.Collections.Generic.List[object]'
+            foreach ($row in $script:__actionRows) {
+                $g = $row.Tag
+                $typeCombo = $g.Children[0]; $typeItem = $typeCombo.SelectedItem
+                $actType = if ($null -ne $typeItem.PSObject.Properties['Tag']) { [string]$typeItem.Tag } else { 'Exec' }
+                if ($actType -eq 'Exec') {
+                    $execPathBox = $g.Children[2]; $execArgsBox = $g.Children[4]; $execWdBox = $g.Children[6]
+                    $prog = [string]$execPathBox.Text
+                    if ([string]::IsNullOrWhiteSpace($prog)) { throw '每个 Exec 操作的程序路径不能为空。' }
+                    if ($prog.IndexOf([char]0) -ge 0) { throw '程序路径包含无效字符。' }
+                    $args = [string]$execArgsBox.Text
+                    if ($args.IndexOf([char]0) -ge 0) { throw '参数包含无效字符。' }
+                    $wd = [string]$execWdBox.Text
+                    if ($wd.IndexOf([char]0) -ge 0) { throw '工作目录包含无效字符。' }
+                    [void]$actionList.Add([PSCustomObject]@{ Type='Exec'; Program=$prog; Arguments=$args; WorkingDirectory=$wd; Title=''; MessageBody='' })
                 }
-                $parsedTime = [DateTime]::MinValue
-                if (-not [DateTime]::TryParseExact(
-                    $startTimeBox.Text.Trim(),
-                    'HH:mm',
-                    [Globalization.CultureInfo]::InvariantCulture,
-                    [Globalization.DateTimeStyles]::None,
-                    [ref]$parsedTime
-                )) {
-                    throw '开始时间必须使用 24 小时 HH:mm 格式，例如 09:30。'
+                else {
+                    $msgTitleBox = $g.Children[7]; $msgBodyBox = $g.Children[9]
+                    $title = [string]$msgTitleBox.Text
+                    if ([string]::IsNullOrWhiteSpace($title)) { throw 'ShowMessage 操作标题不能为空。' }
+                    [void]$actionList.Add([PSCustomObject]@{ Type='ShowMessage'; Program=''; Arguments=''; WorkingDirectory=''; Title=$title; MessageBody=[string]$msgBodyBox.Text })
                 }
-                $startDateTime = $startDatePicker.SelectedDate.Value.Date.Add($parsedTime.TimeOfDay)
             }
+            if ($actionList.Count -eq 0) { throw '请至少添加一个操作。' }
+            $firstAction = $actionList[0]
 
-            $repeatMinutes = 0
-            if (-not [int]::TryParse($repeatMinutesBox.Text.Trim(), [ref]$repeatMinutes) -or
-                $repeatMinutes -lt 0 -or $repeatMinutes -gt 44640) {
-                throw '重复间隔必须是 0 到 44640 之间的整数分钟数。'
+            # --- Extract triggers ---
+            $triggerList = New-Object 'System.Collections.Generic.List[object]'
+            foreach ($row in $script:__triggerRows) {
+                $g = $row.Tag
+                $typeCombo = $g.Children[0]; $kind = [string]$typeCombo.SelectedItem.Content
+                $startDatePicker = $g.Children[4].Children[0]
+                $startTimeBox = $g.Children[4].Children[1]
+                $repeatMinsBox = $g.Children[5].Children[1]
+                $randomDelayBox = $g.Children[5].Children[3]
+
+                $trgStartDate = $startDatePicker.SelectedDate
+                $trgStartTime = $startTimeBox.Text.Trim()
+                $trgStartDt = Get-Date
+
+                if ($kind -in @('单次', '每天', '每周', '每月', '每月（星期）')) {
+                    if ($null -eq $trgStartDate) { throw ('触发器 "{0}"：请选择开始日期。' -f $kind) }
+                    $parsedTime = [DateTime]::MinValue
+                    if (-not [DateTime]::TryParseExact($trgStartTime, 'HH:mm', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None, [ref]$parsedTime)) {
+                        throw ('触发器 "{0}"：开始时间必须使用 HH:mm 格式。' -f $kind)
+                    }
+                    $trgStartDt = $trgStartDate.Value.Date.Add($parsedTime.TimeOfDay)
+                }
+
+                $trgRepeatMins = 0
+                if (-not [int]::TryParse($repeatMinsBox.Text.Trim(), [ref]$trgRepeatMins) -or $trgRepeatMins -lt 0 -or $trgRepeatMins -gt 44640) {
+                    throw '重复间隔必须是 0 到 44640 之间的整数分钟数。'
+                }
+                if ($trgRepeatMins -gt 0 -and $kind -in @('登录时', '空闲时', '注册时')) {
+                    throw ('触发器 "{0}" 不支持重复。' -f $kind)
+                }
+
+                $trgRandomDelay = $randomDelayBox.Text.Trim()
+                if ($trgRandomDelay -and $trgRandomDelay -notmatch '^PT(\d+H)?(\d+M)?(\d+S)?$') {
+                    throw '随机延迟必须是 ISO 8601 格式，例如 PT30M。'
+                }
+
+                # Type-specific
+                $trgDaysOfWeek = 0; $trgWeeksInterval = 1
+                $trgDaysOfMonth = 0; $trgMonthsOfYear = 0; $trgWeeksOfMonth = 0; $trgDelay = ''
+                switch ($kind) {
+                    '每周' {
+                        $dowToggles = $g.Children[6].Children | Where-Object { $_ -is [Windows.Controls.Primitives.ToggleButton] }
+                        foreach ($tb in $dowToggles) { if ($tb.IsChecked) { $trgDaysOfWeek = $trgDaysOfWeek -bor [int]$tb.Tag } }
+                        if ($trgDaysOfWeek -eq 0) { throw '每周触发器：请至少选择一个星期。' }
+                        $weeksBox = $g.Children[6].Children | Where-Object { $_ -is [Windows.Controls.TextBox] } | Select-Object -First 1
+                        [int]::TryParse($weeksBox.Text.Trim(), [ref]$trgWeeksInterval) | Out-Null
+                        if ($trgWeeksInterval -lt 1) { $trgWeeksInterval = 1 }
+                    }
+                    '每月' {
+                        $domText = ($g.Children[7].Children | Where-Object { $_ -is [Windows.Controls.TextBox] } | Select-Object -First 1).Text.Trim()
+                        if ($domText) {
+                            foreach ($d in ($domText -split ',')) {
+                                $dn = 0; if ([int]::TryParse($d.Trim(), [ref]$dn) -and $dn -ge 1 -and $dn -le 31) {
+                                    $trgDaysOfMonth = $trgDaysOfMonth -bor [Math]::Pow(2, $dn - 1)
+                                }
+                            }
+                        }
+                        if ($trgDaysOfMonth -eq 0) { throw '每月触发器：请填写有效的天号（逗号分隔，1-31）。' }
+                        $monthToggles = $g.Children[8].Children | Where-Object { $_ -is [Windows.Controls.Primitives.ToggleButton] }
+                        foreach ($mt in $monthToggles) { if ($mt.IsChecked) { $trgMonthsOfYear = $trgMonthsOfYear -bor [int]$mt.Tag } }
+                    }
+                    '每月（星期）' {
+                        $mdowDOW = $g.Children[9].Children | Where-Object { $_ -is [Windows.Controls.Primitives.ToggleButton] }
+                        $dowTgs = @($mdowDOW)[0..6]; $womTgs = @($mdowDOW)[7..11]
+                        foreach ($tb in $dowTgs) { if ($tb.IsChecked) { $trgDaysOfWeek = $trgDaysOfWeek -bor [int]$tb.Tag } }
+                        if ($trgDaysOfWeek -eq 0) { throw '每月（星期）触发器：请至少选择一个星期。' }
+                        foreach ($wt in $womTgs) { if ($wt.IsChecked) { $trgWeeksOfMonth = $trgWeeksOfMonth -bor [int]$wt.Tag } }
+                        if ($trgWeeksOfMonth -eq 0) { throw '每月（星期）触发器：请至少选择一周。' }
+                        $monthTogglesMD = $g.Children[8].Children | Where-Object { $_ -is [Windows.Controls.Primitives.ToggleButton] }
+                        foreach ($mt in $monthTogglesMD) { if ($mt.IsChecked) { $trgMonthsOfYear = $trgMonthsOfYear -bor [int]$mt.Tag } }
+                    }
+                    '注册时' {
+                        $trgDelay = ($g.Children[10].Children | Where-Object { $_ -is [Windows.Controls.TextBox] } | Select-Object -First 1).Text.Trim()
+                        if ($trgDelay -and $trgDelay -notmatch '^PT(\d+H)?(\d+M)?(\d+S)?$') { throw '注册触发器延迟必须是 ISO 8601 格式。' }
+                    }
+                }
+
+                [void]$triggerList.Add([PSCustomObject]@{
+                    Kind = $kind; StartDate = $trgStartDt.Date; StartTime = $trgStartDt.ToString('HH:mm')
+                    RepeatMinutes = $trgRepeatMins; RandomDelay = $trgRandomDelay
+                    DaysOfWeek = $trgDaysOfWeek; WeeksInterval = $trgWeeksInterval
+                    DaysOfMonth = $trgDaysOfMonth; MonthsOfYear = $trgMonthsOfYear
+                    WeeksOfMonth = $trgWeeksOfMonth; Delay = $trgDelay
+                })
             }
-            if ($kind -eq '登录时' -and $repeatMinutes -ne 0) {
-                throw '登录触发器不支持重复间隔，请填写 0。'
-            }
-            if ($repeatMinutes -gt 0 -and $repeatMinutes -lt 1) {
-                throw '重复间隔至少为 1 分钟。'
-            }
+            if ($triggerList.Count -eq 0) { throw '请至少添加一个触发器。' }
+            $firstTrigger = $triggerList[0]
 
             $normalizedPath = Resolve-FolderPath $taskPathBox.Text
             $name = $taskNameBox.Text
@@ -335,52 +768,30 @@ function Show-TaskEditor {
             $originalPath = if ($Mode -eq 'Edit') { [string]$ExistingData.FullPath } else { $null }
             $isSameTask = $Mode -eq 'Edit' -and $originalPath -eq $fullPath
             $exists = $false
-            try {
-                $exists = Test-TaskExists -FolderPath $normalizedPath -TaskName $name
-            }
-            catch {
-                throw (Get-FriendlyError -ErrorRecord $_ -Context ('检查任务 {0}' -f $fullPath))
-            }
+            try { $exists = Test-TaskExists -FolderPath $normalizedPath -TaskName $name }
+            catch { throw (Get-FriendlyError -ErrorRecord $_ -Context ('检查任务 {0}' -f $fullPath)) }
 
             $overwrite = $false
             if ($exists) {
                 $prompt = if ($isSameTask) {
                     "即将编辑现有任务：`n`n完整 TaskPath + TaskName：$fullPath`n`n确认以表单中的定义覆盖该任务吗？"
-                }
-                elseif ($Mode -eq 'Edit') {
+                } elseif ($Mode -eq 'Edit') {
                     "即将编辑并移动或重命名现有任务：`n$originalPath`n`n目标位置已有任务：`n$fullPath`n`n继续将覆盖目标任务，并在成功后删除原任务。确认吗？"
-                }
-                else {
-                    "同名任务已经存在：`n`n完整 TaskPath + TaskName：$fullPath`n`n确认覆盖吗？"
-                }
-                $answer = [Windows.MessageBox]::Show(
-                    $window,
-                    $prompt,
-                    '确认覆盖现有任务',
-                    [Windows.MessageBoxButton]::YesNo,
-                    [Windows.MessageBoxImage]::Warning,
-                    [Windows.MessageBoxResult]::No
-                )
+                } else { "同名任务已经存在：`n`n完整 TaskPath + TaskName：$fullPath`n`n确认覆盖吗？" }
+                $answer = [Windows.MessageBox]::Show($window, $prompt, '确认覆盖现有任务',
+                    [Windows.MessageBoxButton]::YesNo, [Windows.MessageBoxImage]::Warning, [Windows.MessageBoxResult]::No)
                 if ($answer -ne [Windows.MessageBoxResult]::Yes) { return }
                 $overwrite = $true
-            }
-            elseif ($Mode -eq 'Edit') {
+            } elseif ($Mode -eq 'Edit') {
                 $prompt = "即将把现有任务：`n$originalPath`n`n保存为：`n$fullPath`n`n保存成功后将删除原任务。确认继续吗？"
-                $answer = [Windows.MessageBox]::Show(
-                    $window,
-                    $prompt,
-                    '确认移动或重命名任务',
-                    [Windows.MessageBoxButton]::YesNo,
-                    [Windows.MessageBoxImage]::Warning,
-                    [Windows.MessageBoxResult]::No
-                )
+                $answer = [Windows.MessageBox]::Show($window, $prompt, '确认移动或重命名任务',
+                    [Windows.MessageBoxButton]::YesNo, [Windows.MessageBoxImage]::Warning, [Windows.MessageBoxResult]::No)
                 if ($answer -ne [Windows.MessageBoxResult]::Yes) { return }
             }
 
             $envVars = @{}
             foreach ($row in $script:__envVarRows) {
-                $nameBox = $row.Children[0]
-                $valueBox = $row.Children[2]
+                $nameBox = $row.Children[0]; $valueBox = $row.Children[2]
                 $key = $nameBox.Text.Trim()
                 if ([string]::IsNullOrEmpty($key)) { continue }
                 $envVars[$key] = $valueBox.Text
@@ -391,26 +802,26 @@ function Show-TaskEditor {
                 TaskName = $name
                 Description = [string]$descriptionBox.Text
                 Enabled = [bool]$enabledBox.IsChecked
-                Program = [string]$programBox.Text
-                Arguments = [string]$argumentsBox.Text
-                WorkingDirectory = [string]$workingDirectoryBox.Text
+                Program = [string]$firstAction.Program
+                Arguments = [string]$firstAction.Arguments
+                WorkingDirectory = [string]$firstAction.WorkingDirectory
                 BackgroundMode = [bool]$backgroundBox.IsChecked
                 LogDirectory = [string]$logDirectoryBox.Text
                 Environment = $envVars
-                TriggerKind = $kind
-                StartDateTime = $startDateTime
-                RepeatMinutes = $repeatMinutes
+                TriggerKind = $firstTrigger.Kind
+                StartDateTime = $firstTrigger.StartDate.Date.Add([TimeSpan]::Parse($firstTrigger.StartTime))
+                RepeatMinutes = $firstTrigger.RepeatMinutes
                 Overwrite = $overwrite
+                Actions = [object[]]$actionList
+                Triggers = [object[]]$triggerList
             }
             $window.DialogResult = $true
         }
         catch {
             [void][Windows.MessageBox]::Show(
-                $window,
-                $_.Exception.Message,
+                $window, $_.Exception.Message,
                 '输入无效',
-                [Windows.MessageBoxButton]::OK,
-                [Windows.MessageBoxImage]::Warning
+                [Windows.MessageBoxButton]::OK, [Windows.MessageBoxImage]::Warning
             )
         }
     })
