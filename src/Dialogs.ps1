@@ -230,19 +230,6 @@ function Show-TaskEditor {
         $execBrowseBtn.Margin = [Windows.Thickness]::new(4, 2, 2, 2)
         [Windows.Controls.Grid]::SetRow($execBrowseBtn, 1); [Windows.Controls.Grid]::SetColumn($execBrowseBtn, 2)
         [void]$grid.Children.Add($execBrowseBtn)
-        $execBrowseBtn.Tag = [PSCustomObject]@{ PathBox = $execPathBox; WdBox = $execWdBox }
-        $execBrowseBtn.Add_Click({
-            $data = $this.Tag
-            $dialog = New-Object Microsoft.Win32.OpenFileDialog
-            $dialog.Title = '选择要运行的程序'
-            $dialog.Filter = '可执行文件 (*.exe;*.com;*.bat;*.cmd)|*.exe;*.com;*.bat;*.cmd|所有文件 (*.*)|*.*'
-            if ($dialog.ShowDialog($window)) {
-                $data.PathBox.Text = $dialog.FileName
-                if ([string]::IsNullOrWhiteSpace($data.WdBox.Text)) {
-                    $data.WdBox.Text = [IO.Path]::GetDirectoryName($dialog.FileName)
-                }
-            }
-        })
 
         # Row 2: Exec - arguments
         $execArgsLabel = New-Object Windows.Controls.TextBlock
@@ -287,6 +274,21 @@ function Show-TaskEditor {
         $msgBodyBox.Height = 50; $msgBodyBox.AcceptsReturn = $true; $msgBodyBox.TextWrapping = 'Wrap'
         [Windows.Controls.Grid]::SetRow($msgBodyBox, 2); [Windows.Controls.Grid]::SetColumn($msgBodyBox, 1)
         [void]$grid.Children.Add($msgBodyBox)
+
+        # Wire browse button after all text boxes exist.
+        $execBrowseBtn.Tag = [PSCustomObject]@{ PathBox = $execPathBox; WdBox = $execWdBox }
+        $execBrowseBtn.Add_Click({
+            $data = $this.Tag
+            $dialog = New-Object Microsoft.Win32.OpenFileDialog
+            $dialog.Title = '选择要运行的程序'
+            $dialog.Filter = '可执行文件 (*.exe;*.com;*.bat;*.cmd)|*.exe;*.com;*.bat;*.cmd|所有文件 (*.*)|*.*'
+            if ($dialog.ShowDialog($window)) {
+                $data.PathBox.Text = $dialog.FileName
+                if ([string]::IsNullOrWhiteSpace($data.WdBox.Text)) {
+                    $data.WdBox.Text = [IO.Path]::GetDirectoryName($dialog.FileName)
+                }
+            }
+        })
 
         # Exec field list for toggling — stored on combo for event handler access.
         $typeCombo.Tag = [PSCustomObject]@{ ExecFields = @($execPathLabel, $execPathBox, $execBrowseBtn, $execArgsLabel, $execArgsBox, $execWdLabel, $execWdBox); MsgFields = @($msgTitleLabel, $msgTitleBox, $msgBodyLabel, $msgBodyBox) }
