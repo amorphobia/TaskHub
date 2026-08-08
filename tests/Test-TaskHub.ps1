@@ -611,6 +611,20 @@ try {
             $backgroundRuntime = Get-BackgroundRuntimeInfo -FullTaskPath $backgroundFullPath -Action $backgroundAction
             $expectedWrapperPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
             Assert-True ($null -ne $backgroundRuntime) 'Background test task correctly identified as background app'
+            $configBytes = [IO.File]::ReadAllBytes($backgroundRuntime.ConfigPath)
+            $hasUtf8Bom = $configBytes.Length -ge 3 -and
+                $configBytes[0] -eq 0xEF -and $configBytes[1] -eq 0xBB -and $configBytes[2] -eq 0xBF
+            Assert-True (-not $hasUtf8Bom) 'Background config is written as UTF-8 without BOM'
+            $legacyBomConfigPath = Join-Path $backgroundRuntime.RuntimeDirectory 'config.legacy-bom-test.json'
+            try {
+                $configText = [IO.File]::ReadAllText($backgroundRuntime.ConfigPath, [Text.Encoding]::UTF8)
+                [IO.File]::WriteAllText($legacyBomConfigPath, $configText, (New-Object Text.UTF8Encoding($true)))
+                $legacyConfig = Read-BackgroundConfig $legacyBomConfigPath
+                Assert-True ($null -ne $legacyConfig -and [int]$legacyConfig.Version -eq 1) 'Legacy UTF-8 BOM config remains readable'
+            }
+            finally {
+                if ([IO.File]::Exists($legacyBomConfigPath)) { [IO.File]::Delete($legacyBomConfigPath) }
+            }
             Assert-True ([string]::Equals([string]$backgroundAction.Path, $expectedWrapperPowerShell, [StringComparison]::OrdinalIgnoreCase)) 'Task Scheduler tracks system Windows PowerShell directly'
             Assert-True ([string]$backgroundAction.Arguments -match '^-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -File ') 'Wrapper action uses hidden non-interactive PowerShell parameters'
             Assert-True ([string]::Equals([string]$backgroundAction.WorkingDirectory, $backgroundRuntime.RuntimeDirectory, [StringComparison]::OrdinalIgnoreCase)) 'Wrapper action uses task-specific runtime directory'

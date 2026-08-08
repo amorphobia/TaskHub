@@ -413,7 +413,13 @@ try {
     if (-not [IO.File]::Exists($configPath)) {
         throw ('Background configuration does not exist: {0}' -f $configPath)
     }
-    $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    # Accept both legacy UTF-8-with-BOM and canonical UTF-8-without-BOM config files.
+    $utf8Strict = New-Object -TypeName Text.UTF8Encoding -ArgumentList @($false, $true)
+    $configJson = $utf8Strict.GetString([IO.File]::ReadAllBytes($configPath))
+    if ($configJson.Length -gt 0 -and $configJson[0] -eq [char]0xFEFF) {
+        $configJson = $configJson.Substring(1)
+    }
+    $config = $configJson | ConvertFrom-Json
     if ($null -ne $config.PSObject.Properties['LogDirectory'] -and
         -not [string]::IsNullOrWhiteSpace([string]$config.LogDirectory)) {
         $logDirectory = [IO.Path]::GetFullPath([string]$config.LogDirectory)

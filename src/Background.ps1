@@ -132,7 +132,13 @@ function Read-BackgroundConfig {
     param([Parameter(Mandatory = $true)][string]$ConfigPath)
     if (-not [IO.File]::Exists($ConfigPath)) { return $null }
     try {
-        $json = [IO.File]::ReadAllText($ConfigPath, [Text.Encoding]::UTF8)
+        # Read both legacy UTF-8-with-BOM files and the canonical UTF-8-without-BOM
+        # format. Decode explicitly so the BOM is never passed to ConvertFrom-Json.
+        $utf8Strict = New-Object -TypeName Text.UTF8Encoding -ArgumentList @($false, $true)
+        $json = $utf8Strict.GetString([IO.File]::ReadAllBytes($ConfigPath))
+        if ($json.Length -gt 0 -and $json[0] -eq [char]0xFEFF) {
+            $json = $json.Substring(1)
+        }
         return $json | ConvertFrom-Json
     }
     catch {
@@ -316,7 +322,9 @@ function Install-BackgroundRuntime {
             throw 'BackgroundWrapperContent 为空；构建产物可能已损坏。请使用 build.ps1 重新构建。'
         }
         [IO.File]::WriteAllText($values.WrapperPath, $script:BackgroundWrapperContent, (New-Object Text.UTF8Encoding($true)))
-        [IO.File]::WriteAllText($values.ConfigPath, $configJson, (New-Object Text.UTF8Encoding($true)))
+        # config.json is canonical UTF-8 without a BOM. Read-BackgroundConfig remains
+        # backward compatible with files written by older builds with a BOM.
+        [IO.File]::WriteAllText($values.ConfigPath, $configJson, (New-Object Text.UTF8Encoding($false)))
         Write-AppLog -Message ('已部署后台运行文件：{0}' -f $values.RuntimeDirectory)
         return $state
     }
