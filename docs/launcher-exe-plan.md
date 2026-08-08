@@ -53,7 +53,10 @@ Launcher 本身必须编译为 Windows 子系统（`csc.exe /target:winexe`）�
 - 配置使用 .NET Framework 自带的 `DataContractJsonSerializer`，避免引入第三方 DLL
 - `LauncherConfig` 至少包含：`Version`、`TaskFullPath`、`Executable`、`Arguments`、
   `WorkingDirectory`、`LogDirectory`、`LogDirectoryIsDefault`、`Environment`
-- 读取配置时接受 UTF-8 和 UTF-8 BOM；未知字段忽略；缺少必需字段或 JSON 无效时写入
+- `config.json` 的规范格式为 UTF-8 无 BOM；该编码约定不改变 config schema，也不增加 `Version`
+- 读取配置时必须兼容规范的无 BOM 格式和旧版本的 UTF-8 BOM 格式；实现应先按 UTF-8 解码，
+  去除开头的 BOM（如存在），再交给 JSON 序列化器
+- 未知字段忽略；缺少必需字段或 JSON 无效时写入
   `wrapper-error.log` 并返回非零退出码
 - 目标程序退出后，Launcher 返回目标程序的退出码；Launcher 自身启动失败返回非零值
 - `--version` 只输出版本并返回 0，不读取任务配置、不创建日志、不启动目标程序
@@ -128,6 +131,7 @@ Launcher 本身必须编译为 Windows 子系统（`csc.exe /target:winexe`）�
 ### 7. 向后兼容
 
 - 旧任务（有 wrapper.ps1 + config.json 的）继续用旧方式运行，不受影响
+- 旧任务的 BOM 配置无需迁移；新写入的 config.json 使用无 BOM 格式，读取逻辑同时兼容两种格式
 - `Get-BackgroundActionCandidates`、`Get-BackgroundRuntimeInfo` 和
   `Test-ActionTargetsBackgroundRunner` 必须同时识别旧 wrapper action 和新 Launcher action
 - 识别仍必须校验任务专属目录中的 config.json、`Version` 和 `TaskFullPath`，不能只按 EXE 路径
