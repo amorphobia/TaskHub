@@ -368,12 +368,19 @@ namespace TaskHub
                 if (ResumeThread(process.hThread) == UInt32.MaxValue)
                     ThrowLastWin32Error("ResumeThread");
 
-                uint waitResult = WaitForSingleObject(process.hProcess, INFINITE);
+                // Wait for the whole job to empty rather than only the initial
+                // process. A target such as mihomo may hand off to a child process
+                // (e.g. an API /restart) and then exit; waiting on the initial
+                // process would return at that handoff and the finally block would
+                // close the job handle, killing the successor via KILL_ON_JOB_CLOSE.
+                // The job handle becomes signaled only once the last process in the
+                // job has terminated (job objects are waitable since Windows 8).
+                uint waitResult = WaitForSingleObject(job, INFINITE);
                 if (waitResult == WAIT_FAILED)
                     ThrowLastWin32Error("WaitForSingleObject");
                 if (waitResult != WAIT_OBJECT_0)
                     throw new InvalidOperationException(
-                        "Unexpected process wait result: " + waitResult.ToString());
+                        "Unexpected job wait result: " + waitResult.ToString());
 
                 uint exitCode;
                 if (!GetExitCodeProcess(process.hProcess, out exitCode))

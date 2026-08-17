@@ -118,6 +118,8 @@ GUI 不提供 SYSTEM、LocalService、NetworkService、其他用户、HighestAva
 
 Task Scheduler 直接跟踪这个 PowerShell 进程。包装器通过 `CreateProcessW` 以挂起状态创建目标程序，先将其加入设置了 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object，再恢复主线程。这样目标程序来不及在受管范围之外创建子进程；停止任务导致包装器退出并关闭 Job 句柄时，Windows 内核会终止 Job 中的目标程序及其后代。
 
+包装器等到整个 Job 内已无活动进程才退出（Windows 8 起 Job 句柄在活动进程归零时变为有信号），而非只等最初那个进程。因此 mihomo 这类通过 API restart 由子进程接棒、旧进程退出的程序，新进程仍留在同一 Job 并被持续守护；包装器最终返回最初进程的退出码。
+
 目标程序的 stdout/stderr 句柄直接指向日志文件，不经过 PowerShell、`cmd.exe` 或文本编码转换；日志字节编码由目标程序自身决定。整个链路不使用 `ExecutionPolicy Bypass`，不请求提升。
 
 后台任务使用无限执行时间（`PT0S`），不会沿用普通任务的 72 小时上限；多实例策略设为 IgnoreNew，已有服务实例运行时不会因重复触发再启动一个实例。
