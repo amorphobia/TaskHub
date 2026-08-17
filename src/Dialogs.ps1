@@ -917,7 +917,7 @@ function Show-DeleteTaskDialog {
           <Button x:Name="ExportXmlButton" Padding="12,5" Content="导出 XML"/>
           <Separator/>
           <ToggleButton x:Name="BackgroundFilterButton" Padding="12,5" Content="仅显示后台应用"/>
-          <Button x:Name="OpenLogButton" Padding="12,5" Content="打开任务日志"/>
+          <Button x:Name="OpenDirectoryButton" Padding="12,5" Content="打开任务目录"/>
         </ToolBar>
       </ToolBarTray>
     </Border>
@@ -1226,26 +1226,26 @@ $script:MainWindow.FindName('ViewXmlButton').Add_Click({
     }
 })
 
-$script:MainWindow.FindName('OpenLogButton').Add_Click({
+$script:MainWindow.FindName('OpenDirectoryButton').Add_Click({
     if ($script:IsBusy) { return }
     $selected = $script:TaskGrid.SelectedItem
     if ($null -eq $selected) {
         Show-InfoMessage '请先选择一个后台应用任务。'
         return
     }
-    Set-Busy -Busy $true -Status ('正在读取日志目录：{0}' -f $selected.Path)
+    Set-Busy -Busy $true -Status ('正在读取任务目录：{0}' -f $selected.Path)
     try {
         $runtimeInfo = Get-RegisteredTaskBackgroundInfo -FullPath $selected.Path
         if ($null -eq $runtimeInfo) {
-            throw '所选任务不是由本程序配置的后台应用，或其后台配置文件缺失，无法确定日志目录。'
+            throw '所选任务不是由本程序配置的后台应用，或其后台配置文件缺失，无法确定任务目录。'
         }
-        Open-DirectoryInExplorer -Path $runtimeInfo.LogDirectory
-        $message = '已打开任务日志目录：{0}' -f $runtimeInfo.LogDirectory
+        Open-DirectoryInExplorer -Path $runtimeInfo.RuntimeDirectory
+        $message = '已打开任务目录：{0}' -f $runtimeInfo.RuntimeDirectory
         Write-AppLog -Message $message
         Set-Status -Text $message
     }
     catch {
-        $message = Get-FriendlyError -ErrorRecord $_ -Context ('打开任务日志 {0}' -f $selected.Path)
+        $message = Get-FriendlyError -ErrorRecord $_ -Context ('打开任务目录 {0}' -f $selected.Path)
         Show-ErrorMessage $message
         Set-Status -Text $message
     }
