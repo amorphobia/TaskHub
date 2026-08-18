@@ -1,0 +1,70 @@
+name: Nightly Build
+
+on:
+  push:
+    branches:
+      - master
+      - dev
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-build
+  cancel-in-progress: true
+
+jobs:
+  nightly:
+    name: Build and publish nightly .cmd
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build TaskHub.cmd
+        run: ./build.ps1
+
+      - name: Verify build output
+        run: |
+          $item = Get-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'TaskHub.cmd')
+          if ($null -eq $item) { throw 'Build output TaskHub.cmd not found.' }
+          Write-Host "Built $($item.FullName) ($($item.Length) bytes)."
+
+      - name: Upload .cmd artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaskHub-nightly
+          path: TaskHub.cmd
+          if-no-files-found: error
+
+      - name: Publish or update nightly pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # GitHub Actions sets $ErrorActionPreference = 'Stop' for the
+          # powershell shell. Under 'Stop', stderr from native commands
+          # (e.g. gh saying "release not found") becomes a terminating
+          # error and 2>$null cannot silence it. Use 'Continue' and branch
+          # on $LASTEXITCODE instead.
+          $ErrorActionPreference = 'Continue'
+          $tag = 'nightly'
+          $title = 'TaskHub nightly build'
+          $commit = $env:GITHUB_SHA
+          $notes = "Nightly pre-release build from commit $commit.`n`nArtifact: TaskHub.cmd - self-contained CMD/PowerShell polyglot (Windows PowerShell 5.1 + WPF)."
+          gh release view $tag --json id 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            # Reuse the same release: overwrite the asset and update metadata
+            gh release upload $tag .\TaskHub.cmd --clobber
+            if ($LASTEXITCODE -ne 0) { throw "gh release upload failed ($LASTEXITCODE)" }
+            gh release edit $tag --prerelease --title $title --notes $notes
+            if ($LASTEXITCODE -ne 0) { throw "gh release edit failed ($LASTEXITCODE)" }
+          }
+          else {
+            # First run: create the nightly release
+            gh release create $tag .\TaskHub.cmd --prerelease --title $title --notes $notes --target $commit
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed ($LASTEXITCODE)" }
+          }
