@@ -15,6 +15,12 @@
 
 无需 `pwsh`、Gallery 模块、NuGet 包或外部 DLL。
 
+## 下载 nightly 构建
+
+从 [nightly Release](https://github.com/amorphobia/TaskHub/releases/tag/nightly) 下载 `TaskHub.cmd`，双击即可运行。
+
+GitHub Actions 在 `master` / `dev` 推送、每天北京时间 02:17 或手动触发时构建。定时构建使用默认分支 `master`；每次成功发布会更新同一个 `nightly` 预发布、标签和 `TaskHub.cmd` 附件，并保留 Actions 构建产物。
+
 ## 构建与运行
 
 ```powershell
