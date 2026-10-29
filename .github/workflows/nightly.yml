@@ -4,11 +4,6 @@ on:
   push:
     branches:
       - master
-      - dev
-  schedule:
-    # Daily at 02:17 Asia/Shanghai (18:17 UTC), from the default branch.
-    - cron: '17 18 * * *'
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -47,6 +42,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish or update nightly pre-release
+        if: ${{ success() }}
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

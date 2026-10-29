@@ -19,7 +19,7 @@
 
 从 [nightly Release](https://github.com/amorphobia/TaskHub/releases/tag/nightly) 下载 `TaskHub.cmd`，双击即可运行。
 
-GitHub Actions 在 `master` / `dev` 推送、每天北京时间 02:17 或手动触发时构建。定时构建使用默认分支 `master`；每次成功发布会更新同一个 `nightly` 预发布、标签和 `TaskHub.cmd` 附件，并保留 Actions 构建产物。
+GitHub Actions 仅在 `master` 分支收到推送时构建；构建、产物校验和 Actions 产物上传均成功后，才更新同一个 `nightly` 预发布、标签和 `TaskHub.cmd` 附件。构建失败时保留上一次发布的产物，不设置定时或手动触发。
 
 ## 构建与运行
 
